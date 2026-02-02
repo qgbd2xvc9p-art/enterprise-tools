@@ -46,7 +46,6 @@ The desktop console lives in `app/`.
 Each tool in `registry.json` can declare a `type`:
 
 - `download` (default): download/update a zip asset
-- `web`: open a URL or local HTML in an embedded webview
 - `cli`: run a command and show output in a modal console
 
 Example:

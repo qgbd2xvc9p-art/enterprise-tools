@@ -23,14 +23,6 @@
           }
         },
         {
-          "id": "web-demo",
-          "name": "Web Demo Tool",
-          "version": "0.1.0",
-          "description": "Demo web tool opened in an embedded webview.",
-          "type": "web",
-          "url": "https://example.com"
-        },
-        {
           "id": "cli-demo",
           "name": "CLI Demo Tool",
           "version": "0.1.0",

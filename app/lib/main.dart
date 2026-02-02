@@ -4,7 +4,6 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:webview_flutter/webview_flutter.dart';
 
 const String registryUrl =
     'https://raw.githubusercontent.com/qgbd2xvc9p-art/enterprise-tools/main/registry.json';
@@ -379,18 +378,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  void _openWebTool(Tool tool) {
-    final url = tool.url;
-    if (url == null || url.trim().isEmpty) {
-      _showSnack('No URL configured for this tool.');
-      return;
-    }
-    showDialog(
-      context: context,
-      builder: (context) => WebToolDialog(title: tool.name, url: url),
-    );
-  }
-
   void _runCliTool(Tool tool) {
     final command = tool.command;
     if (command == null || command.trim().isEmpty) {
@@ -619,7 +606,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final progress = _downloadProgress[key] ?? 0;
     final toolType = tool.type.toLowerCase();
     final isDownloadTool = toolType == 'download';
-    final isWebTool = toolType == 'web';
     final isCliTool = toolType == 'cli';
 
     return Container(
@@ -680,8 +666,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 const _InfoChip(label: 'Update available', accent: true),
               if (isDownloadTool && installed != null)
                 _InfoChip(label: 'Saved to ${installed.path}'),
-              if (isWebTool && tool.url != null)
-                _InfoChip(label: tool.url!),
               if (isCliTool && tool.command != null)
                 _InfoChip(label: tool.command!),
             ],
@@ -704,11 +688,6 @@ class _HomeScreenState extends State<HomeScreen> {
                           ? 'Update'
                           : 'Re-download'),
                 )
-              else if (isWebTool)
-                FilledButton(
-                  onPressed: () => _openWebTool(tool),
-                  child: const Text('Open'),
-                )
               else if (isCliTool)
                 FilledButton(
                   onPressed: () => _runCliTool(tool),
@@ -716,8 +695,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 )
               else
                 FilledButton(
-                  onPressed: () => _openWebTool(tool),
-                  child: const Text('Open'),
+                  onPressed: () => _showSnack('Web tools are disabled in this build.'),
+                  child: const Text('Unavailable'),
                 ),
               const SizedBox(width: 12),
               if (isDownloadTool && installed != null)
@@ -803,79 +782,6 @@ class _StaggeredReveal extends StatelessWidget {
         );
       },
       child: child,
-    );
-  }
-}
-
-class WebToolDialog extends StatefulWidget {
-  const WebToolDialog({super.key, required this.title, required this.url});
-
-  final String title;
-  final String url;
-
-  @override
-  State<WebToolDialog> createState() => _WebToolDialogState();
-}
-
-class _WebToolDialogState extends State<WebToolDialog> {
-  late final WebViewController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    final uri = _buildUri(widget.url);
-    _controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..loadRequest(uri);
-  }
-
-  Uri _buildUri(String input) {
-    final value = input.trim();
-    if (value.startsWith('http://') || value.startsWith('https://')) {
-      return Uri.parse(value);
-    }
-    if (value.startsWith('file://')) {
-      return Uri.parse(value);
-    }
-    return Uri.file(value);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Dialog(
-      insetPadding: const EdgeInsets.all(24),
-      child: SizedBox(
-        width: 960,
-        height: 640,
-        child: Column(
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              color: const Color(0xFF0E3A53),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      widget.title,
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleMedium
-                          ?.copyWith(color: Colors.white),
-                    ),
-                  ),
-                  IconButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.close, color: Colors.white),
-                  ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: WebViewWidget(controller: _controller),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }
