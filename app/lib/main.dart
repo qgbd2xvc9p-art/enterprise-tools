@@ -1071,6 +1071,18 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
             ),
+            const SizedBox(width: 8),
+            if (_searchQuery.trim().isNotEmpty)
+              OutlinedButton.icon(
+                onPressed: () {
+                  setState(() {
+                    _searchController.clear();
+                    _searchQuery = '';
+                  });
+                },
+                icon: const Icon(Icons.clear_all),
+                label: const Text('清空筛选'),
+              ),
             const SizedBox(width: 12),
             FilledButton.icon(
               onPressed: () => _load(force: true),
