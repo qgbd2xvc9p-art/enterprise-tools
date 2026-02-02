@@ -192,9 +192,9 @@ class _LoginScreenState extends State<LoginScreen> {
           spacing: 12,
           runSpacing: 12,
           children: const [
-            _Tag(label: 'Desktop-first'),
-            _Tag(label: 'Auto updates'),
-            _Tag(label: 'Role-based access'),
+            _Tag(label: '桌面优先'),
+            _Tag(label: '自动更新'),
+            _Tag(label: '权限控制'),
           ],
         ),
       ],
@@ -227,7 +227,7 @@ class _LoginScreenState extends State<LoginScreen> {
           TextField(
             controller: _usernameController,
             decoration: const InputDecoration(
-              labelText: 'Username',
+              labelText: '用户名',
               border: OutlineInputBorder(),
             ),
           ),
@@ -236,7 +236,7 @@ class _LoginScreenState extends State<LoginScreen> {
             controller: _passwordController,
             obscureText: true,
             decoration: const InputDecoration(
-              labelText: 'Password',
+              labelText: '密码',
               border: OutlineInputBorder(),
             ),
           ),
@@ -340,7 +340,7 @@ class _HomeScreenState extends State<HomeScreen> {
             : 'unknown';
     final platform = tool.platforms[platformKey];
     if (platform == null) {
-      _showSnack('This tool is not available for this platform.');
+      _showSnack('该工具不支持当前平台。');
       return;
     }
 
@@ -423,8 +423,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 ? const Center(child: CircularProgressIndicator())
                 : _error != null
                     ? _buildError()
-                    : registry == null
-                        ? const Center(child: Text('No registry found.'))
+                        : registry == null
+                        ? const Center(child: Text('未找到工具清单。'))
                         : _buildContent(registry, theme),
           ),
         ),
@@ -439,7 +439,7 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           const Icon(Icons.error_outline, size: 48, color: Color(0xFFB94A48)),
           const SizedBox(height: 12),
-          Text(_error ?? 'Unknown error'),
+          Text(_error ?? '未知错误'),
           const SizedBox(height: 12),
           FilledButton(onPressed: _load, child: const Text('重试')),
         ],
@@ -538,7 +538,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     style: theme.textTheme.bodyMedium,
                   ),
                 ),
-                TextButton(onPressed: widget.onLogout, child: const Text('Sign out'))
+                TextButton(onPressed: widget.onLogout, child: const Text('退出登录'))
               ],
             ),
           ),
@@ -658,8 +658,8 @@ class _HomeScreenState extends State<HomeScreen> {
                         ? '未安装'
                         : '已安装 v${installed.version}')
                     : isCliTool
-                        ? 'CLI tool'
-                        : 'Embedded tool',
+                        ? '命令行工具'
+                        : '内嵌工具',
               ),
               if (isDownloadTool && hasUpdate)
                 const _InfoChip(label: '有新版本', accent: true),
@@ -868,7 +868,7 @@ class _CliToolDialogState extends State<CliToolDialog> {
 
   void _stop() {
     _process?.kill(ProcessSignal.sigterm);
-    _appendLine('Process terminated.');
+      _appendLine('进程已终止。');
   }
 
   @override

@@ -4,13 +4,13 @@
   "enterprises": [
     {
       "id": "example-co",
-      "name": "Example Co",
+      "name": "\u793a\u4f8b\u516c\u53f8",
       "tools": [
         {
           "id": "sample-tool",
-          "name": "Sample Tool",
+          "name": "\u793a\u4f8b\u5de5\u5177",
           "version": "0.1.0",
-          "description": "Starter desktop utility for Example Co.",
+          "description": "\u793a\u4f8b\u516c\u53f8\u7684\u684c\u9762\u5c0f\u5de5\u5177\u3002",
           "platforms": {
             "macos": {
               "asset": "example-co-sample-tool-0.1.0-macos.zip",
@@ -24,26 +24,26 @@
         },
         {
           "id": "cli-demo",
-          "name": "CLI Demo Tool",
+          "name": "\u547d\u4ee4\u884c\u793a\u4f8b\u5de5\u5177",
           "version": "0.1.0",
-          "description": "Demo CLI tool that runs a simple command.",
+          "description": "\u6f14\u793a\u547d\u4ee4\u884c\u5de5\u5177\u8fd0\u884c\u6548\u679c\u3002",
           "type": "cli",
           "command": "echo",
           "args": [
-            "Hello from CLI tool"
+            "\u4f60\u597d\uff0c\u6765\u81ea\u547d\u4ee4\u884c\u5de5\u5177"
           ]
         }
       ]
     },
     {
       "id": "acme-inc",
-      "name": "Acme Inc",
+      "name": "ACME \u516c\u53f8",
       "tools": [
         {
           "id": "report-tool",
-          "name": "Report Tool",
+          "name": "\u62a5\u8868\u5de5\u5177",
           "version": "0.1.0",
-          "description": "Internal reporting packager.",
+          "description": "\u5185\u90e8\u62a5\u8868\u6253\u5305\u5de5\u5177\u3002",
           "platforms": {
             "macos": {
               "asset": "acme-inc-report-tool-0.1.0-macos.zip",
@@ -59,13 +59,13 @@
     },
     {
       "id": "fmm",
-      "name": "Fmm",
+      "name": "FMM",
       "tools": [
         {
           "id": "fmmbaobiao",
-          "name": "Fmm Baobiao",
+          "name": "FMM \u62a5\u8868",
           "version": "0.1.0",
-          "description": "Manual packaged tool.",
+          "description": "\u624b\u5de5\u6253\u5305\u7684\u62a5\u8868\u5de5\u5177\u3002",
           "platforms": {
             "macos": {
               "asset": "fmm-fmmbaobiao-0.1.0-macos.zip",
