@@ -473,57 +473,60 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _openInstalledTool(InstalledEntry entry, Tool tool) async {
-    final path = entry.path;
-    if (path.trim().isEmpty) {
+    final candidates = <String>[];
+    if (tool.type == 'local') {
+      final original = tool.localPath;
+      if (original != null && original.trim().isNotEmpty) {
+        candidates.add(original);
+      }
+    }
+    if (entry.path.trim().isNotEmpty) {
+      candidates.add(entry.path);
+    }
+    if (candidates.isEmpty) {
       _showSnack('未找到可打开的路径。');
       return;
     }
-    final entityType = FileSystemEntity.typeSync(path);
-    if (entityType == FileSystemEntityType.notFound) {
-      _showSnack('路径不存在，请重新安装工具。');
-      return;
-    }
-    final lower = path.toLowerCase();
-    if (lower.endsWith('.zip')) {
-      _showSnack('这是压缩包，请先解压后再运行。');
-      return;
-    }
-    try {
-      _showSnack('正在打开，请稍候…');
-      if (Platform.isMacOS) {
-        final result = await Process.run('open', [path], runInShell: true);
-        if (result.exitCode != 0) {
-          final fallback = tool.localPath;
-          if (fallback != null && fallback.trim().isNotEmpty) {
-            final fallbackType = FileSystemEntity.typeSync(fallback);
-            if (fallbackType != FileSystemEntityType.notFound) {
-              final retry =
-                  await Process.run('open', [fallback], runInShell: true);
-              if (retry.exitCode == 0) {
-                _showSnack('已从原路径打开（容器内应用无法直接启动）。');
-                return;
-              }
-            }
+
+    String? lastError;
+    for (final path in candidates) {
+      final entityType = FileSystemEntity.typeSync(path);
+      if (entityType == FileSystemEntityType.notFound) {
+        lastError = '路径不存在：$path';
+        continue;
+      }
+      final lower = path.toLowerCase();
+      if (lower.endsWith('.zip')) {
+        lastError = '这是压缩包，请先解压后再运行。';
+        continue;
+      }
+      try {
+        _showSnack('正在打开，请稍候…');
+        if (Platform.isMacOS) {
+          final result = await Process.run('open', [path], runInShell: true);
+          if (result.exitCode == 0) {
+            _showSnack('已尝试打开，如无响应请在保存位置手动打开。');
+            return;
           }
-          _showSnack('打开失败：${result.stderr.toString()}');
-        } else {
-          _showSnack('已尝试打开，如无响应请在保存位置手动打开。');
+          lastError = result.stderr.toString().trim();
+          continue;
         }
-        return;
-      }
-      if (Platform.isWindows) {
-        if (entityType == FileSystemEntityType.directory) {
-          await Process.run('explorer', [path], runInShell: true);
-        } else {
-          await Process.run('cmd', ['/c', 'start', '', path],
-              runInShell: true);
+        if (Platform.isWindows) {
+          if (entityType == FileSystemEntityType.directory) {
+            await Process.run('explorer', [path], runInShell: true);
+          } else {
+            await Process.run('cmd', ['/c', 'start', '', path],
+                runInShell: true);
+          }
+          return;
         }
+        await Process.run('xdg-open', [path], runInShell: true);
         return;
+      } catch (err) {
+        lastError = err.toString();
       }
-      await Process.run('xdg-open', [path], runInShell: true);
-    } catch (err) {
-      _showSnack('打开失败：${err.toString()}');
     }
+    _showSnack('打开失败：${lastError ?? '未知错误'}');
   }
 
   void _runCliTool(Tool tool) {
