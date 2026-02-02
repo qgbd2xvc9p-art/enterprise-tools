@@ -1,0 +1,8 @@
+name: sample-tool
+version: 0.1.0
+build:
+  windows: flutter build windows
+  macos: flutter build macos
+package:
+  windows: build/windows/x64/runner/Release
+  macos: build/macos/Build/Products/Release

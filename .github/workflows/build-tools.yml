@@ -1,0 +1,109 @@
+name: build-tools
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      build_all:
+        description: "Build all tools"
+        type: boolean
+        default: false
+
+jobs:
+  prep:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      has_tools: ${{ steps.matrix.outputs.has_tools }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: pip install pyyaml
+
+      - id: matrix
+        run: python scripts/ci/generate_matrix.py
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+          BUILD_ALL: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.build_all || 'false' }}
+
+  build:
+    needs: prep
+    if: needs.prep.outputs.has_tools == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prep.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Enable desktop
+        shell: bash
+        run: |
+          flutter config --enable-windows-desktop --enable-macos-desktop
+          flutter doctor -v
+
+      - name: Build
+        shell: bash
+        working-directory: ${{ matrix.dir }}
+        run: ${{ matrix.build_cmd }}
+
+      - name: Package
+        shell: bash
+        working-directory: ${{ matrix.dir }}
+        run: |
+          set -euo pipefail
+          ARTIFACT_NAME="${{ matrix.enterprise }}-${{ matrix.tool }}-${{ matrix.version }}-${{ matrix.platform }}.zip"
+          OUT_DIR="${GITHUB_WORKSPACE}/dist"
+          mkdir -p "$OUT_DIR"
+          if [ "${{ matrix.platform }}" = "windows" ]; then
+            cd "${{ matrix.package_dir }}"
+            7z a "$OUT_DIR/$ARTIFACT_NAME" *
+          else
+            cd "${{ matrix.package_dir }}"
+            APP="$(ls *.app 2>/dev/null | head -n 1 || true)"
+            if [ -n "$APP" ]; then
+              ditto -c -k --sequesterRsrc --keepParent "$APP" "$OUT_DIR/$ARTIFACT_NAME"
+            else
+              ditto -c -k --sequesterRsrc --keepParent . "$OUT_DIR/$ARTIFACT_NAME"
+            fi
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.enterprise }}-${{ matrix.tool }}-${{ matrix.version }}-${{ matrix.platform }}
+          path: dist/*.zip
+
+  release:
+    needs: build
+    if: needs.prep.outputs.has_tools == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: v${{ github.run_number }}
+          files: dist/**/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
