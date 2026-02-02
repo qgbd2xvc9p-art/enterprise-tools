@@ -1185,6 +1185,31 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
         const SizedBox(height: 16),
+        if (_tokenExpiryWarning() != null) ...[
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFF3CD),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFE6C24E)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.warning_amber_rounded,
+                    color: Color(0xFFB07A00)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _tokenExpiryWarning()!,
+                    style: theme.textTheme.bodyMedium
+                        ?.copyWith(color: const Color(0xFF6B4E00)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+        ],
         Expanded(
           child: Builder(
             builder: (context) {
@@ -1228,6 +1253,18 @@ class _HomeScreenState extends State<HomeScreen> {
     if (query.isEmpty) return enterprise.tools;
     if (_enterpriseMatches(enterprise, query)) return enterprise.tools;
     return enterprise.tools.where((tool) => _toolMatches(tool, query)).toList();
+  }
+
+  String? _tokenExpiryWarning() {
+    final expiry = _settings?.tokenExpiry.trim() ?? '';
+    final date = _parseDate(expiry);
+    if (date == null) return null;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final days = date.difference(today).inDays;
+    if (days < 0) return 'GitHub Token 已过期，请更新。';
+    if (days <= 7) return 'GitHub Token 将在 $days 天后过期。';
+    return null;
   }
 
   bool _enterpriseMatches(Enterprise enterprise, String query) {
@@ -1480,6 +1517,7 @@ class _GitHubSettingsDialogState extends State<GitHubSettingsDialog> {
   late final TextEditingController _registryPathController;
   late final TextEditingController _assetRegistryPathController;
   late final TextEditingController _uploadBasePathController;
+  late final TextEditingController _expiryController;
   String? _error;
   bool _saving = false;
   bool _testing = false;
@@ -1497,6 +1535,8 @@ class _GitHubSettingsDialogState extends State<GitHubSettingsDialog> {
         TextEditingController(text: widget.settings.assetRegistryPath);
     _uploadBasePathController =
         TextEditingController(text: widget.settings.uploadBasePath);
+    _expiryController =
+        TextEditingController(text: widget.settings.tokenExpiry);
   }
 
   @override
@@ -1507,15 +1547,23 @@ class _GitHubSettingsDialogState extends State<GitHubSettingsDialog> {
     _registryPathController.dispose();
     _assetRegistryPathController.dispose();
     _uploadBasePathController.dispose();
+    _expiryController.dispose();
     super.dispose();
   }
 
   void _save() {
     final token = _tokenController.text.trim();
     final repo = _repoController.text.trim();
+    final expiry = _expiryController.text.trim();
     if (token.isEmpty || repo.isEmpty) {
       setState(() {
       _error = '访问令牌和仓库不能为空。';
+      });
+      return;
+    }
+    if (expiry.isNotEmpty && _parseDate(expiry) == null) {
+      setState(() {
+        _error = '过期日期格式应为 YYYY-MM-DD。';
       });
       return;
     }
@@ -1533,6 +1581,7 @@ class _GitHubSettingsDialogState extends State<GitHubSettingsDialog> {
         uploadBasePath: _uploadBasePathController.text.trim().isEmpty
             ? 'tools'
             : _uploadBasePathController.text.trim(),
+        tokenExpiry: expiry,
       ),
     );
   }
@@ -1626,6 +1675,25 @@ class _GitHubSettingsDialogState extends State<GitHubSettingsDialog> {
               ),
               const SizedBox(height: 12),
               TextField(
+                controller: _expiryController,
+                onChanged: (_) => setState(() {}),
+                decoration: const InputDecoration(
+                  labelText: 'Token 过期日期（可选，YYYY-MM-DD）',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              if (_buildExpiryStatusText() != null) ...[
+                const SizedBox(height: 6),
+                Text(
+                  _buildExpiryStatusText()!,
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodySmall
+                      ?.copyWith(color: _buildExpiryStatusColor()),
+                ),
+              ],
+              const SizedBox(height: 12),
+              TextField(
                 controller: _uploadBasePathController,
                 decoration: const InputDecoration(
                   labelText: '上传目录（仓库内）',
@@ -1684,6 +1752,37 @@ class _GitHubSettingsDialogState extends State<GitHubSettingsDialog> {
         FilledButton(onPressed: _saving ? null : _save, child: const Text('保存')),
       ],
     );
+  }
+
+  String? _buildExpiryStatusText() {
+    final value = _expiryController.text.trim();
+    final date = _parseDate(value);
+    if (date == null) return null;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final days = date.difference(today).inDays;
+    if (days < 0) {
+      return 'Token 已过期（$value）';
+    }
+    if (days == 0) {
+      return 'Token 今日过期';
+    }
+    if (days <= 7) {
+      return 'Token 将在 $days 天后过期';
+    }
+    return 'Token 有效期至 $value';
+  }
+
+  Color _buildExpiryStatusColor() {
+    final value = _expiryController.text.trim();
+    final date = _parseDate(value);
+    if (date == null) return Colors.black54;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final days = date.difference(today).inDays;
+    if (days < 0) return const Color(0xFFB94A48);
+    if (days <= 7) return const Color(0xFFB07A00);
+    return Colors.black54;
   }
 }
 
@@ -3195,6 +3294,7 @@ class GitHubSettings {
     required this.registryPath,
     required this.assetRegistryPath,
     required this.uploadBasePath,
+    required this.tokenExpiry,
   });
 
   final String token;
@@ -3203,6 +3303,7 @@ class GitHubSettings {
   final String registryPath;
   final String assetRegistryPath;
   final String uploadBasePath;
+  final String tokenExpiry;
 
   bool get isValid => token.isNotEmpty && repo.contains('/');
 
@@ -3210,10 +3311,11 @@ class GitHubSettings {
         'token': token,
         'repo': repo,
         'branch': branch,
-        'registryPath': registryPath,
-        'assetRegistryPath': assetRegistryPath,
-        'uploadBasePath': uploadBasePath,
-      };
+      'registryPath': registryPath,
+      'assetRegistryPath': assetRegistryPath,
+      'uploadBasePath': uploadBasePath,
+      'tokenExpiry': tokenExpiry,
+    };
 
   factory GitHubSettings.fromJson(Map<String, dynamic> json) {
     return GitHubSettings(
@@ -3223,6 +3325,7 @@ class GitHubSettings {
       registryPath: json['registryPath'] as String? ?? 'registry.json',
       assetRegistryPath: json['assetRegistryPath'] as String? ?? 'app/assets/registry.json',
       uploadBasePath: json['uploadBasePath'] as String? ?? 'tools',
+      tokenExpiry: json['tokenExpiry'] as String? ?? '',
     );
   }
 
@@ -3234,6 +3337,7 @@ class GitHubSettings {
       registryPath: 'registry.json',
       assetRegistryPath: 'app/assets/registry.json',
       uploadBasePath: 'tools',
+      tokenExpiry: '',
     );
   }
 }
@@ -4136,6 +4240,16 @@ String _basename(String path) {
 String _truncate(String value, {int max = 200}) {
   if (value.length <= max) return value;
   return '${value.substring(0, max)}...';
+}
+
+DateTime? _parseDate(String value) {
+  final trimmed = value.trim();
+  if (trimmed.isEmpty) return null;
+  final match = RegExp(r'^\d{4}-\d{2}-\d{2}$');
+  if (!match.hasMatch(trimmed)) return null;
+  final date = DateTime.tryParse(trimmed);
+  if (date == null) return null;
+  return DateTime(date.year, date.month, date.day);
 }
 
 String _relativePath(String base, String path) {
