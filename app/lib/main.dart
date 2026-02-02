@@ -891,6 +891,48 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           Text('企业列表', style: theme.textTheme.titleLarge),
           const SizedBox(height: 12),
+          TextField(
+            controller: _searchController,
+            onChanged: (value) {
+              setState(() {
+                _searchQuery = value;
+              });
+            },
+            decoration: InputDecoration(
+              hintText: '搜索企业/工具',
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: _searchQuery.trim().isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: '清除',
+                      onPressed: () {
+                        setState(() {
+                          _searchController.clear();
+                          _searchQuery = '';
+                        });
+                      },
+                      icon: const Icon(Icons.close),
+                    ),
+              border: const OutlineInputBorder(),
+              isDense: true,
+            ),
+          ),
+          if (_searchQuery.trim().isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: () {
+                  setState(() {
+                    _searchController.clear();
+                    _searchQuery = '';
+                  });
+                },
+                icon: const Icon(Icons.clear_all),
+                label: const Text('清空筛选'),
+              ),
+            ),
+          ],
           Expanded(
             child: enterprises.isEmpty
                 ? Center(
@@ -1073,52 +1115,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ],
               ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: _searchController,
-                onChanged: (value) {
-                  setState(() {
-                    _searchQuery = value;
-                  });
-                },
-                decoration: InputDecoration(
-                  hintText: '搜索企业/工具',
-                  prefixIcon: const Icon(Icons.search),
-                  suffixIcon: _searchQuery.trim().isEmpty
-                      ? null
-                      : IconButton(
-                          tooltip: '清除',
-                          onPressed: () {
-                            setState(() {
-                              _searchController.clear();
-                              _searchQuery = '';
-                            });
-                          },
-                          icon: const Icon(Icons.close),
-                        ),
-                  border: const OutlineInputBorder(),
-                  isDense: true,
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            OutlinedButton.icon(
-              onPressed: _searchQuery.trim().isEmpty
-                  ? null
-                  : () {
-                      setState(() {
-                        _searchController.clear();
-                        _searchQuery = '';
-                      });
-                    },
-              icon: const Icon(Icons.clear_all),
-              label: const Text('清空筛选'),
             ),
           ],
         ),
