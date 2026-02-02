@@ -3314,6 +3314,14 @@ class BookmarkService {
     if (!Platform.isMacOS) return;
     await _channel.invokeMethod('stopAccess', bookmark);
   }
+
+  static Future<void> copyItem(String source, String destination) async {
+    if (!Platform.isMacOS) return;
+    await _channel.invokeMethod('copyItem', {
+      'source': source,
+      'destination': destination,
+    });
+  }
 }
 
 class AuthService {
@@ -3959,14 +3967,7 @@ Future<void> _copyFilePreserve(File source, String destinationPath) async {
     await source.copy(destinationPath);
     return;
   }
-  final result = await Process.run(
-    'cp',
-    ['-a', source.path, destinationPath],
-    runInShell: true,
-  );
-  if (result.exitCode != 0) {
-    throw Exception('复制失败：${result.stderr.toString()}');
-  }
+  await BookmarkService.copyItem(source.path, destinationPath);
 }
 
 Future<void> _copyDirectoryPreserve(
@@ -3977,14 +3978,7 @@ Future<void> _copyDirectoryPreserve(
     await _copyDirectory(source, destination);
     return;
   }
-  final result = await Process.run(
-    'ditto',
-    [source.path, destination.path],
-    runInShell: true,
-  );
-  if (result.exitCode != 0) {
-    throw Exception('复制失败：${result.stderr.toString()}');
-  }
+  await BookmarkService.copyItem(source.path, destination.path);
 }
 
 class ToolPlatform {

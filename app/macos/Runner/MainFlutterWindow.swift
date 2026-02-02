@@ -77,6 +77,23 @@ class BookmarkChannel {
         } catch {
           result(false)
         }
+      case "copyItem":
+        guard let args = call.arguments as? [String: String],
+              let source = args["source"],
+              let destination = args["destination"] else {
+          result(FlutterError(code: "bad_args", message: "缺少路径参数", details: nil))
+          return
+        }
+        do {
+          let fileManager = FileManager.default
+          if fileManager.fileExists(atPath: destination) {
+            try fileManager.removeItem(atPath: destination)
+          }
+          try fileManager.copyItem(atPath: source, toPath: destination)
+          result(true)
+        } catch {
+          result(FlutterError(code: "copy_failed", message: error.localizedDescription, details: nil))
+        }
       default:
         result(FlutterMethodNotImplemented)
       }
