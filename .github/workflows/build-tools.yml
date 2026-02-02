@@ -72,16 +72,29 @@ jobs:
           OUT_DIR="${GITHUB_WORKSPACE}/dist"
           mkdir -p "$OUT_DIR"
           if [ "${{ matrix.platform }}" = "windows" ]; then
+            if [ ! -d "${{ matrix.package_dir }}" ]; then
+              echo "Package directory not found: ${{ matrix.package_dir }}"
+              exit 1
+            fi
             cd "${{ matrix.package_dir }}"
             7z a "$OUT_DIR/$ARTIFACT_NAME" *
           else
-            cd "${{ matrix.package_dir }}"
-            APP="$(ls *.app 2>/dev/null | head -n 1 || true)"
-            if [ -n "$APP" ]; then
-              ditto -c -k --sequesterRsrc --keepParent "$APP" "$OUT_DIR/$ARTIFACT_NAME"
-            else
-              ditto -c -k --sequesterRsrc --keepParent . "$OUT_DIR/$ARTIFACT_NAME"
+            PKG_DIR="${{ matrix.package_dir }}"
+            if [ ! -d "$PKG_DIR" ]; then
+              echo "Package directory not found: $PKG_DIR"
+              exit 1
             fi
+            if [[ "$PKG_DIR" == *.app ]]; then
+              SRC="$PKG_DIR"
+            else
+              APP="$(ls "$PKG_DIR"/*.app 2>/dev/null | head -n 1 || true)"
+              if [ -n "$APP" ]; then
+                SRC="$APP"
+              else
+                SRC="$PKG_DIR"
+              fi
+            fi
+            ditto -c -k --sequesterRsrc --keepParent "$SRC" "$OUT_DIR/$ARTIFACT_NAME"
           fi
 
       - name: Upload artifact
