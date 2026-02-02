@@ -87,14 +87,18 @@ jobs:
             if [[ "$PKG_DIR" == *.app ]]; then
               SRC="$PKG_DIR"
             else
-              APP="$(ls "$PKG_DIR"/*.app 2>/dev/null | head -n 1 || true)"
+              APP="$(find "$PKG_DIR" -maxdepth 1 -type d -name '*.app' -print -quit || true)"
               if [ -n "$APP" ]; then
                 SRC="$APP"
               else
                 SRC="$PKG_DIR"
               fi
             fi
-            ditto -c -k --sequesterRsrc --keepParent "$SRC" "$OUT_DIR/$ARTIFACT_NAME"
+            SRC_ABS="$(cd "$(dirname "$SRC")" && pwd -P)/$(basename "$SRC")"
+            if ! ditto -c -k --sequesterRsrc --keepParent "$SRC_ABS" "$OUT_DIR/$ARTIFACT_NAME"; then
+              echo "ditto failed; falling back to zip"
+              (cd "$(dirname "$SRC_ABS")" && zip -r "$OUT_DIR/$ARTIFACT_NAME" "$(basename "$SRC_ABS")")
+            fi
           fi
 
       - name: Upload artifact
