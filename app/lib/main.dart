@@ -62,7 +62,7 @@ class _EnterpriseToolsAppState extends State<EnterpriseToolsApp> {
     );
 
     return MaterialApp(
-      title: 'Enterprise Tools',
+      title: '企业工具台',
       theme: theme,
       home: _user == null
           ? LoginScreen(onLogin: _handleLogin)
@@ -106,7 +106,7 @@ class _LoginScreenState extends State<LoginScreen> {
       if (!mounted) return;
       if (user == null) {
         setState(() {
-          _error = 'Invalid username or password.';
+          _error = '用户名或密码错误。';
           _loading = false;
         });
         return;
@@ -115,7 +115,7 @@ class _LoginScreenState extends State<LoginScreen> {
     } catch (err) {
       if (!mounted) return;
       setState(() {
-        _error = 'Login failed. ${err.toString()}';
+        _error = '登录失败：${err.toString()}';
         _loading = false;
       });
     }
@@ -173,7 +173,7 @@ class _LoginScreenState extends State<LoginScreen> {
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
-          'Enterprise Tools',
+          '企业工具台',
           style: Theme.of(context)
               .textTheme
               .headlineLarge
@@ -181,7 +181,7 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
         const SizedBox(height: 12),
         Text(
-          'One console for every enterprise tool.\nDownload, update, and stay compliant.',
+          '一个入口管理所有企业工具。\n下载、更新、合规一站完成。',
           style: Theme.of(context)
               .textTheme
               .bodyLarge
@@ -220,7 +220,7 @@ class _LoginScreenState extends State<LoginScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Sign in',
+            '登录',
             style: Theme.of(context).textTheme.headlineMedium,
           ),
           const SizedBox(height: 16),
@@ -257,12 +257,12 @@ class _LoginScreenState extends State<LoginScreen> {
                       width: 18,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Text('Enter dashboard'),
+                  : const Text('进入控制台'),
             ),
           ),
           const SizedBox(height: 12),
           Text(
-            'Demo accounts: admin/admin123, example/example123, acme/acme123',
+            '演示账号：admin/admin123，example/example123，acme/acme123',
             style: Theme.of(context)
                 .textTheme
                 .bodyMedium
@@ -317,7 +317,7 @@ class _HomeScreenState extends State<HomeScreen> {
       });
     } catch (err) {
       setState(() {
-        _error = 'Failed to load registry. ${err.toString()}';
+        _error = '加载工具清单失败：${err.toString()}';
         _loading = false;
       });
     }
@@ -368,20 +368,20 @@ class _HomeScreenState extends State<HomeScreen> {
         _installed = updated;
         _downloading.remove(key);
       });
-      _showSnack('Downloaded to ${entry.path}');
+      _showSnack('已下载到：${entry.path}');
     } catch (err) {
       if (!mounted) return;
       setState(() {
         _downloading.remove(key);
       });
-      _showSnack('Download failed: ${err.toString()}');
+      _showSnack('下载失败：${err.toString()}');
     }
   }
 
   void _runCliTool(Tool tool) {
     final command = tool.command;
     if (command == null || command.trim().isEmpty) {
-      _showSnack('No command configured for this tool.');
+      _showSnack('该工具未配置命令。');
       return;
     }
     showDialog(
@@ -441,7 +441,7 @@ class _HomeScreenState extends State<HomeScreen> {
           const SizedBox(height: 12),
           Text(_error ?? 'Unknown error'),
           const SizedBox(height: 12),
-          FilledButton(onPressed: _load, child: const Text('Retry')),
+          FilledButton(onPressed: _load, child: const Text('重试')),
         ],
       ),
     );
@@ -486,7 +486,7 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Enterprises', style: theme.textTheme.titleLarge),
+          Text('企业列表', style: theme.textTheme.titleLarge),
           const SizedBox(height: 12),
           Expanded(
             child: ListView.separated(
@@ -551,7 +551,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (enterprise.id.isEmpty) {
       return Center(
         child: Text(
-          'No enterprise access assigned.',
+          '没有可访问的企业。',
           style: theme.textTheme.titleMedium,
         ),
       );
@@ -566,11 +566,11 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Tools for ${enterprise.name}',
+                  Text('${enterprise.name} 的工具',
                       style: theme.textTheme.headlineMedium),
                   const SizedBox(height: 4),
                   Text(
-                    'Platform: ${Platform.isMacOS ? 'macOS' : Platform.isWindows ? 'Windows' : 'Unknown'}',
+                    '当前平台：${Platform.isMacOS ? 'macOS' : Platform.isWindows ? 'Windows' : '未知'}',
                     style: theme.textTheme.bodyMedium?.copyWith(color: Colors.black54),
                   ),
                 ],
@@ -579,7 +579,7 @@ class _HomeScreenState extends State<HomeScreen> {
             FilledButton.icon(
               onPressed: _load,
               icon: const Icon(Icons.refresh),
-              label: const Text('Refresh'),
+              label: const Text('刷新'),
             ),
           ],
         ),
@@ -655,16 +655,16 @@ class _HomeScreenState extends State<HomeScreen> {
               _InfoChip(
                 label: isDownloadTool
                     ? (installed == null
-                        ? 'Not installed'
-                        : 'Installed v${installed.version}')
+                        ? '未安装'
+                        : '已安装 v${installed.version}')
                     : isCliTool
                         ? 'CLI tool'
                         : 'Embedded tool',
               ),
               if (isDownloadTool && hasUpdate)
-                const _InfoChip(label: 'Update available', accent: true),
+                const _InfoChip(label: '有新版本', accent: true),
               if (isDownloadTool && installed != null)
-                _InfoChip(label: 'Saved to ${installed.path}'),
+                _InfoChip(label: '保存位置：${installed.path}'),
               if (isCliTool && tool.command != null)
                 _InfoChip(label: tool.command!),
             ],
@@ -682,20 +682,20 @@ class _HomeScreenState extends State<HomeScreen> {
                 FilledButton(
                   onPressed: isDownloading ? null : () => _downloadTool(tool),
                   child: Text(installed == null
-                      ? 'Download'
+                      ? '下载'
                       : hasUpdate
-                          ? 'Update'
-                          : 'Re-download'),
+                          ? '更新'
+                          : '重新下载'),
                 )
               else if (isCliTool)
                 FilledButton(
                   onPressed: () => _runCliTool(tool),
-                  child: const Text('Run'),
+                  child: const Text('运行'),
                 )
               else
                 FilledButton(
-                  onPressed: () => _showSnack('Web tools are disabled in this build.'),
-                  child: const Text('Unavailable'),
+                  onPressed: () => _showSnack('此版本未启用 Web 工具。'),
+                  child: const Text('不可用'),
                 ),
               const SizedBox(width: 12),
               if (isDownloadTool && installed != null)
@@ -834,7 +834,7 @@ class _CliToolDialogState extends State<CliToolDialog> {
         workingDirectory: _normalizeWorkingDir(widget.workingDir),
       );
       _process = process;
-      _appendLine('Running: ${widget.command} ${widget.args.join(' ')}');
+      _appendLine('正在运行：${widget.command} ${widget.args.join(' ')}');
       process.stdout
           .transform(utf8.decoder)
           .transform(const LineSplitter())
@@ -844,9 +844,9 @@ class _CliToolDialogState extends State<CliToolDialog> {
           .transform(const LineSplitter())
           .listen((line) => _appendLine('[err] $line'));
       final code = await process.exitCode;
-      _appendLine('Process exited with code $code');
+      _appendLine('进程退出，退出码：$code');
     } catch (err) {
-      _appendLine('Failed to start process: $err');
+      _appendLine('启动失败：$err');
     } finally {
       if (mounted) {
         setState(() {
@@ -896,12 +896,12 @@ class _CliToolDialogState extends State<CliToolDialog> {
                   ),
                   TextButton(
                     onPressed: _running ? null : _start,
-                    child: const Text('Run again'),
+                    child: const Text('重新运行'),
                   ),
                   const SizedBox(width: 8),
                   TextButton(
                     onPressed: _running ? _stop : null,
-                    child: const Text('Stop'),
+                    child: const Text('停止'),
                   ),
                   IconButton(
                     onPressed: () => Navigator.of(context).pop(),
