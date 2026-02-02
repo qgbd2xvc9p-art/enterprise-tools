@@ -40,3 +40,20 @@ The desktop console lives in `app/`.
 - Registry source: `registry.json`
 - Fallback registry asset: `app/assets/registry.json`
 - Demo users: `app/assets/users.json`
+
+## Create a New Tool (Script)
+
+```
+python scripts/create_tool.py \\
+  --enterprise-id acme-inc \\
+  --enterprise-name \"Acme Inc\" \\
+  --tool-id report-tool \\
+  --tool-name \"Report Tool\" \\
+  --version 0.1.0 \\
+  --description \"Internal reporting tool\" \\
+  --init-flutter
+```
+
+Options:
+- `--update`: overwrite registry entry if tool exists
+- `--repo owner/name`: override GitHub repo slug for release URLs
