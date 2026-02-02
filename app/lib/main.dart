@@ -434,6 +434,42 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  Future<void> _openEditEnterprise(Enterprise enterprise) async {
+    final result = await showDialog<Enterprise>(
+      context: context,
+      builder: (context) => EditEnterpriseDialog(enterprise: enterprise),
+    );
+    if (result == null) return;
+    await _saveRegistryUpdate((data) {
+      final target = data.enterprises.firstWhere(
+        (e) => e.id == enterprise.id,
+        orElse: () => Enterprise.empty(),
+      );
+      if (target.id.isEmpty) return;
+      target.name = result.name;
+    });
+  }
+
+  Future<void> _openDeleteEnterprise(Enterprise enterprise) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => ConfirmDialog(
+        title: '删除企业',
+        message: '确定要删除 ${enterprise.name} 吗？该企业下的工具也会被移除。',
+      ),
+    );
+    if (confirmed != true) return;
+    await _saveRegistryUpdate((data) {
+      data.enterprises.removeWhere((e) => e.id == enterprise.id);
+    });
+    if (_selectedEnterpriseId == enterprise.id) {
+      setState(() {
+        _selectedEnterpriseId =
+            _registry?.enterprises.isNotEmpty == true ? _registry!.enterprises.first.id : null;
+      });
+    }
+  }
+
   Future<void> _openAddTool() async {
     final registry = _registry;
     if (registry == null) return;
@@ -457,6 +493,43 @@ class _HomeScreenState extends State<HomeScreen> {
       } else {
         enterprise.tools.add(result);
       }
+    });
+  }
+
+  Future<void> _openEditTool(Tool tool) async {
+    final result = await showDialog<Tool>(
+      context: context,
+      builder: (context) => EditToolDialog(tool: tool, enterprises: _registry?.enterprises ?? []),
+    );
+    if (result == null) return;
+    await _saveRegistryUpdate((data) {
+      final enterprise = data.enterprises.firstWhere(
+        (e) => e.id == tool.enterpriseId,
+        orElse: () => Enterprise.empty(),
+      );
+      if (enterprise.id.isEmpty) return;
+      final index = enterprise.tools.indexWhere((t) => t.id == tool.id);
+      if (index >= 0) {
+        enterprise.tools[index] = result;
+      }
+    });
+  }
+
+  Future<void> _openDeleteTool(Tool tool) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => ConfirmDialog(
+        title: '删除工具',
+        message: '确定要删除 ${tool.name} 吗？',
+      ),
+    );
+    if (confirmed != true) return;
+    await _saveRegistryUpdate((data) {
+      final enterprise = data.enterprises.firstWhere(
+        (e) => e.id == tool.enterpriseId,
+        orElse: () => Enterprise.empty(),
+      );
+      enterprise.tools.removeWhere((t) => t.id == tool.id);
     });
   }
 
@@ -592,11 +665,35 @@ class _HomeScreenState extends State<HomeScreen> {
                           : const Color(0xFFF7F4EE),
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    child: Text(
-                      enterprise.name,
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        color: selected ? Colors.white : Colors.black87,
-                      ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            enterprise.name,
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              color: selected ? Colors.white : Colors.black87,
+                            ),
+                          ),
+                        ),
+                        PopupMenuButton<String>(
+                          tooltip: '更多',
+                          onSelected: (value) {
+                            if (value == 'edit') {
+                              _openEditEnterprise(enterprise);
+                            } else if (value == 'delete') {
+                              _openDeleteEnterprise(enterprise);
+                            }
+                          },
+                          itemBuilder: (context) => const [
+                            PopupMenuItem(value: 'edit', child: Text('编辑')),
+                            PopupMenuItem(value: 'delete', child: Text('删除')),
+                          ],
+                          icon: Icon(
+                            Icons.more_horiz,
+                            color: selected ? Colors.white : Colors.black54,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 );
@@ -745,6 +842,22 @@ class _HomeScreenState extends State<HomeScreen> {
                   style: theme.textTheme.bodyMedium?.copyWith(color: Colors.white),
                 ),
               ),
+              const SizedBox(width: 8),
+              PopupMenuButton<String>(
+                tooltip: '更多',
+                onSelected: (value) {
+                  if (value == 'edit') {
+                    _openEditTool(tool);
+                  } else if (value == 'delete') {
+                    _openDeleteTool(tool);
+                  }
+                },
+                itemBuilder: (context) => const [
+                  PopupMenuItem(value: 'edit', child: Text('编辑')),
+                  PopupMenuItem(value: 'delete', child: Text('删除')),
+                ],
+                icon: const Icon(Icons.more_vert),
+              ),
             ],
           ),
           const SizedBox(height: 8),
@@ -796,7 +909,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 )
               else
                 FilledButton(
-                  onPressed: () => _showSnack('此版本未启用 Web 工具。'),
+                  onPressed: () => _showSnack('此版本未启用网页工具。'),
                   child: const Text('不可用'),
                 ),
               const SizedBox(width: 12),
@@ -963,7 +1076,7 @@ class _GitHubSettingsDialogState extends State<GitHubSettingsDialog> {
               TextField(
                 controller: _tokenController,
                 decoration: const InputDecoration(
-                  labelText: '访问令牌（需要 repo 权限）',
+                  labelText: '访问令牌（需要仓库权限）',
                   border: OutlineInputBorder(),
                 ),
                 obscureText: true,
@@ -972,7 +1085,7 @@ class _GitHubSettingsDialogState extends State<GitHubSettingsDialog> {
               TextField(
                 controller: _repoController,
                 decoration: const InputDecoration(
-                  labelText: '仓库（owner/name）',
+                  labelText: '仓库（用户名/仓库名）',
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -1343,6 +1456,342 @@ class _AddToolDialogState extends State<AddToolDialog> {
       actions: [
         TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('取消')),
         FilledButton(onPressed: _save, child: const Text('保存')),
+      ],
+    );
+  }
+}
+
+class EditEnterpriseDialog extends StatefulWidget {
+  const EditEnterpriseDialog({super.key, required this.enterprise});
+
+  final Enterprise enterprise;
+
+  @override
+  State<EditEnterpriseDialog> createState() => _EditEnterpriseDialogState();
+}
+
+class _EditEnterpriseDialogState extends State<EditEnterpriseDialog> {
+  late final TextEditingController _idController;
+  late final TextEditingController _nameController;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _idController = TextEditingController(text: widget.enterprise.id);
+    _nameController = TextEditingController(text: widget.enterprise.name);
+  }
+
+  @override
+  void dispose() {
+    _idController.dispose();
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final name = _nameController.text.trim();
+    if (name.isEmpty) {
+      setState(() => _error = '企业名称不能为空。');
+      return;
+    }
+    Navigator.of(context).pop(
+      Enterprise(id: widget.enterprise.id, name: name, tools: widget.enterprise.tools),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('编辑企业'),
+      content: SizedBox(
+        width: 360,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _idController,
+              readOnly: true,
+              decoration: const InputDecoration(
+                labelText: '企业 ID（不可修改）',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _nameController,
+              decoration: const InputDecoration(
+                labelText: '企业名称',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 8),
+              Text(_error!, style: const TextStyle(color: Color(0xFFB94A48))),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('取消')),
+        FilledButton(onPressed: _save, child: const Text('保存')),
+      ],
+    );
+  }
+}
+
+class EditToolDialog extends StatefulWidget {
+  const EditToolDialog({super.key, required this.tool, required this.enterprises});
+
+  final Tool tool;
+  final List<Enterprise> enterprises;
+
+  @override
+  State<EditToolDialog> createState() => _EditToolDialogState();
+}
+
+class _EditToolDialogState extends State<EditToolDialog> {
+  late final TextEditingController _idController;
+  late final TextEditingController _nameController;
+  late final TextEditingController _versionController;
+  late final TextEditingController _descController;
+  late final TextEditingController _macUrlController;
+  late final TextEditingController _winUrlController;
+  late final TextEditingController _commandController;
+  late final TextEditingController _argsController;
+  late final TextEditingController _workingDirController;
+  late String _type;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _idController = TextEditingController(text: widget.tool.id);
+    _nameController = TextEditingController(text: widget.tool.name);
+    _versionController = TextEditingController(text: widget.tool.version);
+    _descController = TextEditingController(text: widget.tool.description);
+    _type = widget.tool.type.isEmpty ? 'download' : widget.tool.type;
+    _macUrlController = TextEditingController(
+      text: widget.tool.platforms['macos']?.url ?? '',
+    );
+    _winUrlController = TextEditingController(
+      text: widget.tool.platforms['windows']?.url ?? '',
+    );
+    _commandController = TextEditingController(text: widget.tool.command ?? '');
+    _argsController = TextEditingController(text: widget.tool.args.join(' '));
+    _workingDirController =
+        TextEditingController(text: widget.tool.workingDir ?? '');
+  }
+
+  @override
+  void dispose() {
+    _idController.dispose();
+    _nameController.dispose();
+    _versionController.dispose();
+    _descController.dispose();
+    _macUrlController.dispose();
+    _winUrlController.dispose();
+    _commandController.dispose();
+    _argsController.dispose();
+    _workingDirController.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final name = _nameController.text.trim();
+    final version = _versionController.text.trim();
+    if (name.isEmpty || version.isEmpty) {
+      setState(() => _error = '工具名称和版本不能为空。');
+      return;
+    }
+    final desc = _descController.text.trim();
+    if (_type == 'cli') {
+      final command = _commandController.text.trim();
+      if (command.isEmpty) {
+        setState(() => _error = '命令不能为空。');
+        return;
+      }
+      final args = _parseArgs(_argsController.text);
+      Navigator.of(context).pop(
+        Tool(
+          enterpriseId: widget.tool.enterpriseId,
+          id: widget.tool.id,
+          name: name,
+          version: version,
+          description: desc,
+          platforms: const {},
+          type: 'cli',
+          command: command,
+          args: args,
+          workingDir: _workingDirController.text.trim(),
+        ),
+      );
+      return;
+    }
+
+    final macUrl = _macUrlController.text.trim();
+    final winUrl = _winUrlController.text.trim();
+    if (macUrl.isEmpty && winUrl.isEmpty) {
+      setState(() => _error = '至少提供一个下载地址。');
+      return;
+    }
+    final platforms = <String, ToolPlatform>{};
+    if (macUrl.isNotEmpty) {
+      platforms['macos'] = ToolPlatform(
+        asset: _assetFromUrl(macUrl, widget.tool.enterpriseId, widget.tool.id,
+            version, 'macos'),
+        url: macUrl,
+      );
+    }
+    if (winUrl.isNotEmpty) {
+      platforms['windows'] = ToolPlatform(
+        asset: _assetFromUrl(winUrl, widget.tool.enterpriseId, widget.tool.id,
+            version, 'windows'),
+        url: winUrl,
+      );
+    }
+    Navigator.of(context).pop(
+      Tool(
+        enterpriseId: widget.tool.enterpriseId,
+        id: widget.tool.id,
+        name: name,
+        version: version,
+        description: desc,
+        platforms: platforms,
+        type: 'download',
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('编辑工具'),
+      content: SizedBox(
+        width: 480,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _idController,
+                readOnly: true,
+                decoration: const InputDecoration(
+                  labelText: '工具 ID（不可修改）',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _nameController,
+                decoration: const InputDecoration(
+                  labelText: '工具名称',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _versionController,
+                decoration: const InputDecoration(
+                  labelText: '版本',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _descController,
+                decoration: const InputDecoration(
+                  labelText: '描述',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                value: _type,
+                items: const [
+                  DropdownMenuItem(value: 'download', child: Text('下载工具')),
+                  DropdownMenuItem(value: 'cli', child: Text('命令行工具')),
+                ],
+                onChanged: (value) =>
+                    setState(() => _type = value ?? 'download'),
+                decoration: const InputDecoration(
+                  labelText: '工具类型',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              if (_type == 'download') ...[
+                TextField(
+                  controller: _macUrlController,
+                  decoration: const InputDecoration(
+                    labelText: 'macOS 下载地址',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _winUrlController,
+                  decoration: const InputDecoration(
+                    labelText: 'Windows 下载地址',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+              if (_type == 'cli') ...[
+                TextField(
+                  controller: _commandController,
+                  decoration: const InputDecoration(
+                    labelText: '命令',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _argsController,
+                  decoration: const InputDecoration(
+                    labelText: '参数（空格分隔）',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _workingDirController,
+                  decoration: const InputDecoration(
+                    labelText: '工作目录（可空）',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+              if (_error != null) ...[
+                const SizedBox(height: 8),
+                Text(_error!, style: const TextStyle(color: Color(0xFFB94A48))),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('取消')),
+        FilledButton(onPressed: _save, child: const Text('保存')),
+      ],
+    );
+  }
+}
+
+class ConfirmDialog extends StatelessWidget {
+  const ConfirmDialog({super.key, required this.title, required this.message});
+
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(title),
+      content: Text(message),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('取消')),
+        FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('确认')),
       ],
     );
   }
