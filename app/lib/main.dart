@@ -296,11 +296,19 @@ class _HomeScreenState extends State<HomeScreen> {
   Map<String, double> _downloadProgress = {};
   final Map<String, bool> _downloading = {};
   GitHubSettings? _settings;
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
 
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _load({bool force = false}) async {
@@ -841,9 +849,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildContent(Registry registry, ThemeData theme) {
     final enterprises = _filterEnterprises(registry.enterprises);
-    final selected = enterprises
+    final query = _searchQuery.trim().toLowerCase();
+    final filtered = _applyEnterpriseSearch(enterprises, query);
+    final selected = filtered
         .firstWhere((e) => e.id == _selectedEnterpriseId, orElse: () {
-      return enterprises.isNotEmpty ? enterprises.first : Enterprise.empty();
+      return filtered.isNotEmpty ? filtered.first : Enterprise.empty();
     });
 
     return Row(
@@ -851,11 +861,11 @@ class _HomeScreenState extends State<HomeScreen> {
       children: [
         SizedBox(
           width: 240,
-          child: _buildSidebar(theme, enterprises),
+          child: _buildSidebar(theme, filtered),
         ),
         const SizedBox(width: 24),
         Expanded(
-          child: _buildToolsPanel(theme, selected),
+          child: _buildToolsPanel(theme, selected, query),
         ),
       ],
     );
@@ -881,82 +891,97 @@ class _HomeScreenState extends State<HomeScreen> {
           Text('企业列表', style: theme.textTheme.titleLarge),
           const SizedBox(height: 12),
           Expanded(
-            child: ListView.separated(
-              itemBuilder: (context, index) {
-                final enterprise = enterprises[index];
-                final selected = enterprise.id == _selectedEnterpriseId;
-                return InkWell(
-                  onTap: () {
-                    setState(() {
-                      _selectedEnterpriseId = enterprise.id;
-                    });
-                  },
-                  borderRadius: BorderRadius.circular(12),
-                  child: Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: selected
-                          ? const Color(0xFF0E3A53)
-                          : const Color(0xFFF7F4EE),
-                      borderRadius: BorderRadius.circular(12),
+            child: enterprises.isEmpty
+                ? Center(
+                    child: Text(
+                      '没有匹配的企业',
+                      style: theme.textTheme.bodyMedium
+                          ?.copyWith(color: Colors.black54),
                     ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            enterprise.name,
-                            style: theme.textTheme.titleMedium?.copyWith(
-                              color: selected ? Colors.white : Colors.black87,
-                            ),
+                  )
+                : ListView.separated(
+                    itemBuilder: (context, index) {
+                      final enterprise = enterprises[index];
+                      final selected = enterprise.id == _selectedEnterpriseId;
+                      return InkWell(
+                        onTap: () {
+                          setState(() {
+                            _selectedEnterpriseId = enterprise.id;
+                          });
+                        },
+                        borderRadius: BorderRadius.circular(12),
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: selected
+                                ? const Color(0xFF0E3A53)
+                                : const Color(0xFFF7F4EE),
+                            borderRadius: BorderRadius.circular(12),
                           ),
-                        ),
-                        if (enterprise.localOnly)
-                          Container(
-                            margin: const EdgeInsets.only(right: 8),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 4,
-                            ),
-                            decoration: BoxDecoration(
-                              color: selected
-                                  ? Colors.white.withOpacity(0.2)
-                                  : const Color(0xFFDCE6EC),
-                              borderRadius: BorderRadius.circular(999),
-                            ),
-                            child: Text(
-                              '本地',
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color:
-                                    selected ? Colors.white : Colors.black54,
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  enterprise.name,
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    color: selected
+                                        ? Colors.white
+                                        : Colors.black87,
+                                  ),
+                                ),
                               ),
-                            ),
-                          ),
-                        PopupMenuButton<String>(
-                          tooltip: '更多',
-                          onSelected: (value) {
-                            if (value == 'edit') {
-                              _openEditEnterprise(enterprise);
-                            } else if (value == 'delete') {
-                              _openDeleteEnterprise(enterprise);
-                            }
-                          },
-                          itemBuilder: (context) => const [
-                            PopupMenuItem(value: 'edit', child: Text('编辑')),
-                            PopupMenuItem(value: 'delete', child: Text('删除')),
-                          ],
-                          icon: Icon(
-                            Icons.more_horiz,
-                            color: selected ? Colors.white : Colors.black54,
+                              if (enterprise.localOnly)
+                                Container(
+                                  margin: const EdgeInsets.only(right: 8),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 4,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: selected
+                                        ? Colors.white.withOpacity(0.2)
+                                        : const Color(0xFFDCE6EC),
+                                    borderRadius: BorderRadius.circular(999),
+                                  ),
+                                  child: Text(
+                                    '本地',
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color: selected
+                                          ? Colors.white
+                                          : Colors.black54,
+                                    ),
+                                  ),
+                                ),
+                              PopupMenuButton<String>(
+                                tooltip: '更多',
+                                onSelected: (value) {
+                                  if (value == 'edit') {
+                                    _openEditEnterprise(enterprise);
+                                  } else if (value == 'delete') {
+                                    _openDeleteEnterprise(enterprise);
+                                  }
+                                },
+                                itemBuilder: (context) => const [
+                                  PopupMenuItem(
+                                      value: 'edit', child: Text('编辑')),
+                                  PopupMenuItem(
+                                      value: 'delete', child: Text('删除')),
+                                ],
+                                icon: Icon(
+                                  Icons.more_horiz,
+                                  color: selected
+                                      ? Colors.white
+                                      : Colors.black54,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                      ],
-                    ),
+                      );
+                    },
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemCount: enterprises.length,
                   ),
-                );
-              },
-              separatorBuilder: (_, __) => const SizedBox(height: 8),
-              itemCount: enterprises.length,
-            ),
           ),
           const SizedBox(height: 12),
           Container(
@@ -984,7 +1009,11 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildToolsPanel(ThemeData theme, Enterprise enterprise) {
+  Widget _buildToolsPanel(
+    ThemeData theme,
+    Enterprise enterprise,
+    String query,
+  ) {
     if (enterprise.id.isEmpty) {
       return Center(
         child: Text(
@@ -1013,6 +1042,36 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
+            SizedBox(
+              width: 220,
+              child: TextField(
+                controller: _searchController,
+                onChanged: (value) {
+                  setState(() {
+                    _searchQuery = value;
+                  });
+                },
+                decoration: InputDecoration(
+                  hintText: '搜索企业/工具',
+                  prefixIcon: const Icon(Icons.search),
+                  suffixIcon: _searchQuery.trim().isEmpty
+                      ? null
+                      : IconButton(
+                          tooltip: '清除',
+                          onPressed: () {
+                            setState(() {
+                              _searchController.clear();
+                              _searchQuery = '';
+                            });
+                          },
+                          icon: const Icon(Icons.close),
+                        ),
+                  border: const OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
             FilledButton.icon(
               onPressed: () => _load(force: true),
               icon: const Icon(Icons.refresh),
@@ -1040,17 +1099,61 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         const SizedBox(height: 16),
         Expanded(
-          child: ListView.builder(
-            itemCount: enterprise.tools.length,
-            itemBuilder: (context, index) {
-              final tool = enterprise.tools[index];
-              final card = _buildToolCard(theme, tool);
-              return _StaggeredReveal(index: index, child: card);
+          child: Builder(
+            builder: (context) {
+              final tools = _filterToolsForEnterprise(enterprise, query);
+              if (tools.isEmpty) {
+                return Center(
+                  child: Text(
+                    '没有匹配的工具',
+                    style: theme.textTheme.bodyMedium
+                        ?.copyWith(color: Colors.black54),
+                  ),
+                );
+              }
+              return ListView.builder(
+                itemCount: tools.length,
+                itemBuilder: (context, index) {
+                  final tool = tools[index];
+                  final card = _buildToolCard(theme, tool);
+                  return _StaggeredReveal(index: index, child: card);
+                },
+              );
             },
           ),
         ),
       ],
     );
+  }
+
+  List<Enterprise> _applyEnterpriseSearch(
+    List<Enterprise> enterprises,
+    String query,
+  ) {
+    if (query.isEmpty) return enterprises;
+    return enterprises.where((enterprise) {
+      if (_enterpriseMatches(enterprise, query)) return true;
+      return enterprise.tools.any((tool) => _toolMatches(tool, query));
+    }).toList();
+  }
+
+  List<Tool> _filterToolsForEnterprise(Enterprise enterprise, String query) {
+    if (query.isEmpty) return enterprise.tools;
+    if (_enterpriseMatches(enterprise, query)) return enterprise.tools;
+    return enterprise.tools.where((tool) => _toolMatches(tool, query)).toList();
+  }
+
+  bool _enterpriseMatches(Enterprise enterprise, String query) {
+    final name = enterprise.name.toLowerCase();
+    final id = enterprise.id.toLowerCase();
+    return name.contains(query) || id.contains(query);
+  }
+
+  bool _toolMatches(Tool tool, String query) {
+    final name = tool.name.toLowerCase();
+    final id = tool.id.toLowerCase();
+    final desc = tool.description.toLowerCase();
+    return name.contains(query) || id.contains(query) || desc.contains(query);
   }
 
   Widget _buildToolCard(ThemeData theme, Tool tool) {
