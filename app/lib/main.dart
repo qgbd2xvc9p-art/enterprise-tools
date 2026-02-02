@@ -66,6 +66,7 @@ class _EnterpriseToolsAppState extends State<EnterpriseToolsApp> {
 
     return MaterialApp(
       title: '企业工具台',
+      debugShowCheckedModeBanner: false,
       theme: theme,
       home: _user == null
           ? LoginScreen(onLogin: _handleLogin)
@@ -1027,6 +1028,7 @@ class _HomeScreenState extends State<HomeScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
               child: Column(
@@ -1042,8 +1044,42 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
-            SizedBox(
-              width: 220,
+            const SizedBox(width: 12),
+            Flexible(
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                alignment: WrapAlignment.end,
+                children: [
+                  FilledButton.icon(
+                    onPressed: () => _load(force: true),
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('刷新'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: _openAddEnterprise,
+                    icon: const Icon(Icons.domain_add),
+                    label: const Text('新增企业'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: enterprise.id.isEmpty ? null : _openAddTool,
+                    icon: const Icon(Icons.add_box_outlined),
+                    label: const Text('新增工具'),
+                  ),
+                  IconButton(
+                    onPressed: _openSettings,
+                    tooltip: '设置',
+                    icon: const Icon(Icons.settings),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
               child: TextField(
                 controller: _searchController,
                 onChanged: (value) {
@@ -1072,40 +1108,17 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             const SizedBox(width: 8),
-            if (_searchQuery.trim().isNotEmpty)
-              OutlinedButton.icon(
-                onPressed: () {
-                  setState(() {
-                    _searchController.clear();
-                    _searchQuery = '';
-                  });
-                },
-                icon: const Icon(Icons.clear_all),
-                label: const Text('清空筛选'),
-              ),
-            const SizedBox(width: 12),
-            FilledButton.icon(
-              onPressed: () => _load(force: true),
-              icon: const Icon(Icons.refresh),
-              label: const Text('刷新'),
-            ),
-            const SizedBox(width: 8),
             OutlinedButton.icon(
-              onPressed: _openAddEnterprise,
-              icon: const Icon(Icons.domain_add),
-              label: const Text('新增企业'),
-            ),
-            const SizedBox(width: 8),
-            OutlinedButton.icon(
-              onPressed: enterprise.id.isEmpty ? null : _openAddTool,
-              icon: const Icon(Icons.add_box_outlined),
-              label: const Text('新增工具'),
-            ),
-            const SizedBox(width: 8),
-            IconButton(
-              onPressed: _openSettings,
-              tooltip: '设置',
-              icon: const Icon(Icons.settings),
+              onPressed: _searchQuery.trim().isEmpty
+                  ? null
+                  : () {
+                      setState(() {
+                        _searchController.clear();
+                        _searchQuery = '';
+                      });
+                    },
+              icon: const Icon(Icons.clear_all),
+              label: const Text('清空筛选'),
             ),
           ],
         ),
