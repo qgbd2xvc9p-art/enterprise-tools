@@ -472,7 +472,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _openInstalledTool(InstalledEntry entry) async {
+  Future<void> _openInstalledTool(InstalledEntry entry, Tool tool) async {
     final path = entry.path;
     if (path.trim().isEmpty) {
       _showSnack('未找到可打开的路径。');
@@ -493,6 +493,18 @@ class _HomeScreenState extends State<HomeScreen> {
       if (Platform.isMacOS) {
         final result = await Process.run('open', [path], runInShell: true);
         if (result.exitCode != 0) {
+          final fallback = tool.localPath;
+          if (fallback != null && fallback.trim().isNotEmpty) {
+            final fallbackType = FileSystemEntity.typeSync(fallback);
+            if (fallbackType != FileSystemEntityType.notFound) {
+              final retry =
+                  await Process.run('open', [fallback], runInShell: true);
+              if (retry.exitCode == 0) {
+                _showSnack('已从原路径打开（容器内应用无法直接启动）。');
+                return;
+              }
+            }
+          }
           _showSnack('打开失败：${result.stderr.toString()}');
         } else {
           _showSnack('已尝试打开，如无响应请在保存位置手动打开。');
@@ -1167,7 +1179,7 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(width: 12),
               if ((isDownloadTool || isLocalTool) && installed != null)
                 OutlinedButton.icon(
-                  onPressed: () => _openInstalledTool(installed),
+                  onPressed: () => _openInstalledTool(installed, tool),
                   icon: const Icon(Icons.play_arrow),
                   label: const Text('打开/运行'),
                 ),
