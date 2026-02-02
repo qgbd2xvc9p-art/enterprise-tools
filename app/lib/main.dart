@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 
 const String registryUrl =
     'https://raw.githubusercontent.com/qgbd2xvc9p-art/enterprise-tools/main/registry.json';
@@ -292,6 +293,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Map<String, InstalledEntry> _installed = {};
   Map<String, double> _downloadProgress = {};
   final Map<String, bool> _downloading = {};
+  GitHubSettings? _settings;
 
   @override
   void initState() {
@@ -307,10 +309,12 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final registry = await RegistryService.loadRegistry();
       final installed = await LocalStore.loadInstalled();
+      final settings = await LocalStore.loadSettings();
       final visible = _filterEnterprises(registry.enterprises);
       setState(() {
         _registry = registry;
         _installed = installed;
+        _settings = settings;
         _selectedEnterpriseId =
             visible.isNotEmpty ? visible.first.id : null;
         _loading = false;
@@ -400,6 +404,86 @@ class _HomeScreenState extends State<HomeScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
     );
+  }
+
+  Future<void> _openSettings() async {
+    final current = _settings ?? GitHubSettings.defaultSettings();
+    final result = await showDialog<GitHubSettings>(
+      context: context,
+      builder: (context) => GitHubSettingsDialog(settings: current),
+    );
+    if (result != null) {
+      await LocalStore.saveSettings(result);
+      setState(() {
+        _settings = result;
+      });
+      _showSnack('设置已保存。');
+    }
+  }
+
+  Future<void> _openAddEnterprise() async {
+    final registry = _registry;
+    if (registry == null) return;
+    final result = await showDialog<Enterprise>(
+      context: context,
+      builder: (context) => AddEnterpriseDialog(existing: registry.enterprises),
+    );
+    if (result == null) return;
+    await _saveRegistryUpdate((data) {
+      data.enterprises.add(result);
+    });
+  }
+
+  Future<void> _openAddTool() async {
+    final registry = _registry;
+    if (registry == null) return;
+    final result = await showDialog<Tool>(
+      context: context,
+      builder: (context) => AddToolDialog(
+        enterprises: registry.enterprises,
+        selectedEnterpriseId: _selectedEnterpriseId,
+      ),
+    );
+    if (result == null) return;
+    await _saveRegistryUpdate((data) {
+      final enterprise = data.enterprises.firstWhere(
+        (e) => e.id == result.enterpriseId,
+        orElse: () => Enterprise.empty(),
+      );
+      if (enterprise.id.isEmpty) {
+        data.enterprises.add(
+          Enterprise(id: result.enterpriseId, name: result.enterpriseId, tools: [result]),
+        );
+      } else {
+        enterprise.tools.add(result);
+      }
+    });
+  }
+
+  Future<void> _saveRegistryUpdate(void Function(Registry data) mutate) async {
+    final registry = _registry;
+    final settings = _settings;
+    if (registry == null) return;
+    if (settings == null || !settings.isValid) {
+      _showSnack('请先在“设置”中配置 GitHub 权限。');
+      return;
+    }
+    final updated = registry.copy();
+    mutate(updated);
+    try {
+      await GitHubRegistryWriter.updateRegistry(
+        settings: settings,
+        registry: updated,
+      );
+      RegistryService.clearCache();
+      final refreshed = await RegistryService.loadRegistry();
+      setState(() {
+        _registry = refreshed;
+      });
+      _showSnack('已提交到 GitHub。');
+    } catch (err) {
+      _showSnack('提交失败：${err.toString()}');
+    }
   }
 
   @override
@@ -580,6 +664,24 @@ class _HomeScreenState extends State<HomeScreen> {
               onPressed: _load,
               icon: const Icon(Icons.refresh),
               label: const Text('刷新'),
+            ),
+            const SizedBox(width: 8),
+            OutlinedButton.icon(
+              onPressed: _openAddEnterprise,
+              icon: const Icon(Icons.domain_add),
+              label: const Text('新增企业'),
+            ),
+            const SizedBox(width: 8),
+            OutlinedButton.icon(
+              onPressed: enterprise.id.isEmpty ? null : _openAddTool,
+              icon: const Icon(Icons.add_box_outlined),
+              label: const Text('新增工具'),
+            ),
+            const SizedBox(width: 8),
+            IconButton(
+              onPressed: _openSettings,
+              tooltip: '设置',
+              icon: const Icon(Icons.settings),
             ),
           ],
         ),
@@ -785,6 +887,467 @@ class _StaggeredReveal extends StatelessWidget {
   }
 }
 
+class GitHubSettingsDialog extends StatefulWidget {
+  const GitHubSettingsDialog({super.key, required this.settings});
+
+  final GitHubSettings settings;
+
+  @override
+  State<GitHubSettingsDialog> createState() => _GitHubSettingsDialogState();
+}
+
+class _GitHubSettingsDialogState extends State<GitHubSettingsDialog> {
+  late final TextEditingController _tokenController;
+  late final TextEditingController _repoController;
+  late final TextEditingController _branchController;
+  late final TextEditingController _registryPathController;
+  late final TextEditingController _assetRegistryPathController;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _tokenController = TextEditingController(text: widget.settings.token);
+    _repoController = TextEditingController(text: widget.settings.repo);
+    _branchController = TextEditingController(text: widget.settings.branch);
+    _registryPathController =
+        TextEditingController(text: widget.settings.registryPath);
+    _assetRegistryPathController =
+        TextEditingController(text: widget.settings.assetRegistryPath);
+  }
+
+  @override
+  void dispose() {
+    _tokenController.dispose();
+    _repoController.dispose();
+    _branchController.dispose();
+    _registryPathController.dispose();
+    _assetRegistryPathController.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final token = _tokenController.text.trim();
+    final repo = _repoController.text.trim();
+    if (token.isEmpty || repo.isEmpty) {
+      setState(() {
+      _error = '访问令牌和仓库不能为空。';
+      });
+      return;
+    }
+    Navigator.of(context).pop(
+      GitHubSettings(
+        token: token,
+        repo: repo,
+        branch: _branchController.text.trim().isEmpty
+            ? 'main'
+            : _branchController.text.trim(),
+        registryPath: _registryPathController.text.trim().isEmpty
+            ? 'registry.json'
+            : _registryPathController.text.trim(),
+        assetRegistryPath: _assetRegistryPathController.text.trim(),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('GitHub 设置'),
+      content: SizedBox(
+        width: 420,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _tokenController,
+                decoration: const InputDecoration(
+                  labelText: '访问令牌（需要 repo 权限）',
+                  border: OutlineInputBorder(),
+                ),
+                obscureText: true,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _repoController,
+                decoration: const InputDecoration(
+                  labelText: '仓库（owner/name）',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _branchController,
+                decoration: const InputDecoration(
+                  labelText: '分支（默认 main）',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _registryPathController,
+                decoration: const InputDecoration(
+                  labelText: 'registry.json 路径',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _assetRegistryPathController,
+                decoration: const InputDecoration(
+                  labelText: 'app/assets/registry.json 路径（可选）',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '注意：访问令牌会明文保存在本机设置文件中。',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodyMedium
+                    ?.copyWith(color: Colors.black54),
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 8),
+                Text(_error!, style: const TextStyle(color: Color(0xFFB94A48))),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('取消')),
+        FilledButton(onPressed: _save, child: const Text('保存')),
+      ],
+    );
+  }
+}
+
+class AddEnterpriseDialog extends StatefulWidget {
+  const AddEnterpriseDialog({super.key, required this.existing});
+
+  final List<Enterprise> existing;
+
+  @override
+  State<AddEnterpriseDialog> createState() => _AddEnterpriseDialogState();
+}
+
+class _AddEnterpriseDialogState extends State<AddEnterpriseDialog> {
+  final _idController = TextEditingController();
+  final _nameController = TextEditingController();
+  String? _error;
+
+  @override
+  void dispose() {
+    _idController.dispose();
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final id = _idController.text.trim();
+    final name = _nameController.text.trim();
+    if (id.isEmpty || name.isEmpty) {
+      setState(() => _error = '企业 ID 和名称不能为空。');
+      return;
+    }
+    if (widget.existing.any((e) => e.id == id)) {
+      setState(() => _error = '该企业 ID 已存在。');
+      return;
+    }
+    Navigator.of(context).pop(Enterprise(id: id, name: name, tools: []));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('新增企业'),
+      content: SizedBox(
+        width: 360,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _idController,
+              decoration: const InputDecoration(
+                labelText: '企业 ID（小写、短横线）',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _nameController,
+              decoration: const InputDecoration(
+                labelText: '企业名称',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 8),
+              Text(_error!, style: const TextStyle(color: Color(0xFFB94A48))),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('取消')),
+        FilledButton(onPressed: _save, child: const Text('保存')),
+      ],
+    );
+  }
+}
+
+class AddToolDialog extends StatefulWidget {
+  const AddToolDialog({
+    super.key,
+    required this.enterprises,
+    required this.selectedEnterpriseId,
+  });
+
+  final List<Enterprise> enterprises;
+  final String? selectedEnterpriseId;
+
+  @override
+  State<AddToolDialog> createState() => _AddToolDialogState();
+}
+
+class _AddToolDialogState extends State<AddToolDialog> {
+  final _idController = TextEditingController();
+  final _nameController = TextEditingController();
+  final _versionController = TextEditingController(text: '0.1.0');
+  final _descController = TextEditingController();
+  final _macUrlController = TextEditingController();
+  final _winUrlController = TextEditingController();
+  final _commandController = TextEditingController();
+  final _argsController = TextEditingController();
+  final _workingDirController = TextEditingController();
+  String _type = 'download';
+  String? _enterpriseId;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _enterpriseId = widget.selectedEnterpriseId ??
+        (widget.enterprises.isNotEmpty ? widget.enterprises.first.id : null);
+  }
+
+  @override
+  void dispose() {
+    _idController.dispose();
+    _nameController.dispose();
+    _versionController.dispose();
+    _descController.dispose();
+    _macUrlController.dispose();
+    _winUrlController.dispose();
+    _commandController.dispose();
+    _argsController.dispose();
+    _workingDirController.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final enterpriseId = _enterpriseId;
+    final id = _idController.text.trim();
+    final name = _nameController.text.trim();
+    final version = _versionController.text.trim();
+    if (enterpriseId == null || enterpriseId.isEmpty) {
+      setState(() => _error = '请选择企业。');
+      return;
+    }
+    if (id.isEmpty || name.isEmpty || version.isEmpty) {
+      setState(() => _error = '工具 ID、名称、版本不能为空。');
+      return;
+    }
+    final existingEnterprise =
+        widget.enterprises.where((e) => e.id == enterpriseId).toList();
+    if (existingEnterprise.isNotEmpty &&
+        existingEnterprise.first.tools.any((t) => t.id == id)) {
+      setState(() => _error = '该企业下已存在相同工具 ID。');
+      return;
+    }
+    final desc = _descController.text.trim();
+    if (_type == 'cli') {
+      final command = _commandController.text.trim();
+      if (command.isEmpty) {
+        setState(() => _error = 'CLI 工具必须填写命令。');
+        return;
+      }
+      final args = _parseArgs(_argsController.text);
+      final tool = Tool(
+        enterpriseId: enterpriseId,
+        id: id,
+        name: name,
+        version: version,
+        description: desc,
+        platforms: const {},
+        type: 'cli',
+        command: command,
+        args: args,
+        workingDir: _workingDirController.text.trim(),
+      );
+      Navigator.of(context).pop(tool);
+      return;
+    }
+
+    final macUrl = _macUrlController.text.trim();
+    final winUrl = _winUrlController.text.trim();
+    if (macUrl.isEmpty && winUrl.isEmpty) {
+      setState(() => _error = '至少提供一个下载地址。');
+      return;
+    }
+    final platforms = <String, ToolPlatform>{};
+    if (macUrl.isNotEmpty) {
+      platforms['macos'] = ToolPlatform(
+        asset: _assetFromUrl(macUrl, enterpriseId, id, version, 'macos'),
+        url: macUrl,
+      );
+    }
+    if (winUrl.isNotEmpty) {
+      platforms['windows'] = ToolPlatform(
+        asset: _assetFromUrl(winUrl, enterpriseId, id, version, 'windows'),
+        url: winUrl,
+      );
+    }
+    final tool = Tool(
+      enterpriseId: enterpriseId,
+      id: id,
+      name: name,
+      version: version,
+      description: desc,
+      platforms: platforms,
+      type: 'download',
+    );
+    Navigator.of(context).pop(tool);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('新增工具'),
+      content: SizedBox(
+        width: 480,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DropdownButtonFormField<String>(
+                value: _enterpriseId,
+                items: widget.enterprises
+                    .map((e) => DropdownMenuItem(value: e.id, child: Text(e.name)))
+                    .toList(),
+                onChanged: (value) => setState(() => _enterpriseId = value),
+                decoration: const InputDecoration(
+                  labelText: '所属企业',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _idController,
+                decoration: const InputDecoration(
+                  labelText: '工具 ID',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _nameController,
+                decoration: const InputDecoration(
+                  labelText: '工具名称',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _versionController,
+                decoration: const InputDecoration(
+                  labelText: '版本',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _descController,
+                decoration: const InputDecoration(
+                  labelText: '描述',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                value: _type,
+                items: const [
+                  DropdownMenuItem(value: 'download', child: Text('下载工具')),
+                  DropdownMenuItem(value: 'cli', child: Text('命令行工具')),
+                ],
+                onChanged: (value) =>
+                    setState(() => _type = value ?? 'download'),
+                decoration: const InputDecoration(
+                  labelText: '工具类型',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              if (_type == 'download') ...[
+                TextField(
+                  controller: _macUrlController,
+                  decoration: const InputDecoration(
+                    labelText: 'macOS 下载地址',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _winUrlController,
+                  decoration: const InputDecoration(
+                    labelText: 'Windows 下载地址',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+              if (_type == 'cli') ...[
+                TextField(
+                  controller: _commandController,
+                  decoration: const InputDecoration(
+                    labelText: '命令',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _argsController,
+                  decoration: const InputDecoration(
+                    labelText: '参数（空格分隔）',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _workingDirController,
+                  decoration: const InputDecoration(
+                    labelText: '工作目录（可空）',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+              if (_error != null) ...[
+                const SizedBox(height: 8),
+                Text(_error!, style: const TextStyle(color: Color(0xFFB94A48))),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('取消')),
+        FilledButton(onPressed: _save, child: const Text('保存')),
+      ],
+    );
+  }
+}
+
 class CliToolDialog extends StatefulWidget {
   const CliToolDialog({
     super.key,
@@ -842,7 +1405,7 @@ class _CliToolDialogState extends State<CliToolDialog> {
       process.stderr
           .transform(utf8.decoder)
           .transform(const LineSplitter())
-          .listen((line) => _appendLine('[err] $line'));
+          .listen((line) => _appendLine('[错误] $line'));
       final code = await process.exitCode;
       _appendLine('进程退出，退出码：$code');
     } catch (err) {
@@ -958,6 +1521,10 @@ class RegistryService {
     return _cache!;
   }
 
+  static void clearCache() {
+    _cache = null;
+  }
+
   static Future<String?> _fetchUrl(String url) async {
     final client = HttpClient();
     try {
@@ -969,6 +1536,114 @@ class RegistryService {
       return await response.transform(utf8.decoder).join();
     } finally {
       client.close();
+    }
+  }
+}
+
+class GitHubSettings {
+  GitHubSettings({
+    required this.token,
+    required this.repo,
+    required this.branch,
+    required this.registryPath,
+    required this.assetRegistryPath,
+  });
+
+  final String token;
+  final String repo;
+  final String branch;
+  final String registryPath;
+  final String assetRegistryPath;
+
+  bool get isValid => token.isNotEmpty && repo.contains('/');
+
+  Map<String, dynamic> toJson() => {
+        'token': token,
+        'repo': repo,
+        'branch': branch,
+        'registryPath': registryPath,
+        'assetRegistryPath': assetRegistryPath,
+      };
+
+  factory GitHubSettings.fromJson(Map<String, dynamic> json) {
+    return GitHubSettings(
+      token: json['token'] as String? ?? '',
+      repo: json['repo'] as String? ?? '',
+      branch: json['branch'] as String? ?? 'main',
+      registryPath: json['registryPath'] as String? ?? 'registry.json',
+      assetRegistryPath: json['assetRegistryPath'] as String? ?? 'app/assets/registry.json',
+    );
+  }
+
+  static GitHubSettings defaultSettings() {
+    return GitHubSettings(
+      token: '',
+      repo: 'qgbd2xvc9p-art/enterprise-tools',
+      branch: 'main',
+      registryPath: 'registry.json',
+      assetRegistryPath: 'app/assets/registry.json',
+    );
+  }
+}
+
+class GitHubRegistryWriter {
+  static Future<void> updateRegistry({
+    required GitHubSettings settings,
+    required Registry registry,
+  }) async {
+    final jsonText = jsonEncode(registry.toJson());
+    await _updateFile(
+      settings: settings,
+      path: settings.registryPath,
+      content: jsonText,
+      message: '更新 registry.json',
+    );
+    final assetPath = settings.assetRegistryPath.trim();
+    if (assetPath.isNotEmpty) {
+      await _updateFile(
+        settings: settings,
+        path: assetPath,
+        content: jsonText,
+        message: '同步 app/assets/registry.json',
+      );
+    }
+  }
+
+  static Future<void> _updateFile({
+    required GitHubSettings settings,
+    required String path,
+    required String content,
+    required String message,
+  }) async {
+    final uri = Uri.parse(
+      'https://api.github.com/repos/${settings.repo}/contents/$path?ref=${settings.branch}',
+    );
+    final headers = {
+      'Authorization': 'Bearer ${settings.token}',
+      'Accept': 'application/vnd.github+json',
+      'User-Agent': 'enterprise-tools-app',
+    };
+
+    String? sha;
+    final getResp = await http.get(uri, headers: headers);
+    if (getResp.statusCode == 200) {
+      final data = jsonDecode(getResp.body) as Map<String, dynamic>;
+      sha = data['sha'] as String?;
+    } else if (getResp.statusCode != 404) {
+      throw Exception('读取文件失败：${getResp.statusCode}');
+    }
+
+    final body = {
+      'message': message,
+      'content': base64Encode(utf8.encode(content)),
+      'branch': settings.branch,
+    };
+    if (sha != null) {
+      body['sha'] = sha;
+    }
+    final putResp = await http.put(uri, headers: headers, body: jsonEncode(body));
+    if (putResp.statusCode < 200 || putResp.statusCode >= 300) {
+      throw Exception('写入失败：${putResp.statusCode} ${putResp.body}');
     }
   }
 }
@@ -1062,6 +1737,22 @@ class DownloadService {
 }
 
 class LocalStore {
+  static Future<GitHubSettings?> loadSettings() async {
+    final file = await _settingsFile();
+    if (!await file.exists()) {
+      return null;
+    }
+    final content = await file.readAsString();
+    if (content.trim().isEmpty) return null;
+    final data = jsonDecode(content) as Map<String, dynamic>;
+    return GitHubSettings.fromJson(data);
+  }
+
+  static Future<void> saveSettings(GitHubSettings settings) async {
+    final file = await _settingsFile();
+    await file.writeAsString(jsonEncode(settings.toJson()));
+  }
+
   static Future<Map<String, InstalledEntry>> loadInstalled() async {
     final file = await _installedFile();
     if (!await file.exists()) {
@@ -1100,6 +1791,12 @@ class LocalStore {
     final base = await _baseDir();
     await base.create(recursive: true);
     return File('${base.path}/installed.json');
+  }
+
+  static Future<File> _settingsFile() async {
+    final base = await _baseDir();
+    await base.create(recursive: true);
+    return File('${base.path}/settings.json');
   }
 
   static Future<Directory> _baseDir() async {
@@ -1157,6 +1854,20 @@ class Registry {
         .toList();
     return Registry(enterprises: list);
   }
+
+  Registry copy() {
+    return Registry(
+      enterprises: enterprises.map((e) => e.copy()).toList(),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'generatedAt': DateTime.now().toIso8601String().split('T').first,
+      'source': 'app',
+      'enterprises': enterprises.map((e) => e.toJson()).toList(),
+    };
+  }
 }
 
 class Enterprise {
@@ -1183,6 +1894,22 @@ class Enterprise {
   }
 
   factory Enterprise.empty() => Enterprise(id: '', name: '', tools: []);
+
+  Enterprise copy() {
+    return Enterprise(
+      id: id,
+      name: name,
+      tools: tools.map((t) => t.copy()).toList(),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'name': name,
+      'tools': tools.map((t) => t.toJson()).toList(),
+    };
+  }
 }
 
 class Tool {
@@ -1220,7 +1947,7 @@ class Tool {
       platforms[key] = ToolPlatform.fromJson(value as Map<String, dynamic>);
     });
     final type = (json['type'] as String?) ??
-        (platforms.isNotEmpty ? 'download' : 'web');
+        (platforms.isNotEmpty ? 'download' : 'download');
     final rawArgs = json['args'];
     final args = <String>[];
     if (rawArgs is List) {
@@ -1242,12 +1969,97 @@ class Tool {
       workingDir: _normalizeWorkingDir(json['workingDir'] as String?),
     );
   }
+
+  Tool copy() {
+    return Tool(
+      enterpriseId: enterpriseId,
+      id: id,
+      name: name,
+      version: version,
+      description: description,
+      platforms: platforms.map((key, value) => MapEntry(key, value.copy())),
+      type: type,
+      url: url,
+      command: command,
+      args: List<String>.from(args),
+      workingDir: workingDir,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    final data = <String, dynamic>{
+      'id': id,
+      'name': name,
+      'version': version,
+      'description': description,
+    };
+    if (type.isNotEmpty && type != 'download') {
+      data['type'] = type;
+    }
+    if (platforms.isNotEmpty) {
+      data['platforms'] = platforms.map((key, value) => MapEntry(key, value.toJson()));
+    }
+    if (type == 'cli') {
+      data['type'] = 'cli';
+      data['command'] = command ?? '';
+      if (args.isNotEmpty) {
+        data['args'] = args;
+      }
+      if (workingDir != null && workingDir!.trim().isNotEmpty) {
+        data['workingDir'] = workingDir;
+      }
+    }
+    return data;
+  }
 }
 
 String? _normalizeWorkingDir(String? value) {
   if (value == null) return null;
   final trimmed = value.trim();
   return trimmed.isEmpty ? null : trimmed;
+}
+
+List<String> _parseArgs(String raw) {
+  final input = raw.trim();
+  if (input.isEmpty) return [];
+  final args = <String>[];
+  final buffer = StringBuffer();
+  bool inQuotes = false;
+  for (var i = 0; i < input.length; i++) {
+    final char = input[i];
+    if (char == '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (!inQuotes && char.trim().isEmpty) {
+      if (buffer.isNotEmpty) {
+        args.add(buffer.toString());
+        buffer.clear();
+      }
+      continue;
+    }
+    buffer.write(char);
+  }
+  if (buffer.isNotEmpty) {
+    args.add(buffer.toString());
+  }
+  return args;
+}
+
+String _assetFromUrl(
+  String url,
+  String enterpriseId,
+  String toolId,
+  String version,
+  String platform,
+) {
+  try {
+    final uri = Uri.parse(url);
+    if (uri.pathSegments.isNotEmpty) {
+      return uri.pathSegments.last;
+    }
+  } catch (_) {}
+  return '$enterpriseId-$toolId-$version-$platform.zip';
 }
 
 class ToolPlatform {
@@ -1261,6 +2073,15 @@ class ToolPlatform {
       asset: json['asset'] as String,
       url: json['url'] as String,
     );
+  }
+
+  ToolPlatform copy() => ToolPlatform(asset: asset, url: url);
+
+  Map<String, dynamic> toJson() {
+    return {
+      'asset': asset,
+      'url': url,
+    };
   }
 }
 
