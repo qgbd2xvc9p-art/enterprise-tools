@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 
 const String registryUrl =
     'https://raw.githubusercontent.com/qgbd2xvc9p-art/enterprise-tools/main/registry.json';
@@ -378,6 +379,35 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  void _openWebTool(Tool tool) {
+    final url = tool.url;
+    if (url == null || url.trim().isEmpty) {
+      _showSnack('No URL configured for this tool.');
+      return;
+    }
+    showDialog(
+      context: context,
+      builder: (context) => WebToolDialog(title: tool.name, url: url),
+    );
+  }
+
+  void _runCliTool(Tool tool) {
+    final command = tool.command;
+    if (command == null || command.trim().isEmpty) {
+      _showSnack('No command configured for this tool.');
+      return;
+    }
+    showDialog(
+      context: context,
+      builder: (context) => CliToolDialog(
+        title: tool.name,
+        command: command,
+        args: tool.args,
+        workingDir: tool.workingDir,
+      ),
+    );
+  }
+
   void _showSnack(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
@@ -587,6 +617,10 @@ class _HomeScreenState extends State<HomeScreen> {
         compareVersions(installed.version, tool.version) < 0;
     final isDownloading = _downloading[key] == true;
     final progress = _downloadProgress[key] ?? 0;
+    final toolType = tool.type.toLowerCase();
+    final isDownloadTool = toolType == 'download';
+    final isWebTool = toolType == 'web';
+    final isCliTool = toolType == 'cli';
 
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
@@ -632,35 +666,61 @@ class _HomeScreenState extends State<HomeScreen> {
             runSpacing: 8,
             children: [
               _InfoChip(
-                label: installed == null
-                    ? 'Not installed'
-                    : 'Installed v${installed.version}',
+                label: isDownloadTool
+                    ? (installed == null
+                        ? 'Not installed'
+                        : 'Installed v${installed.version}')
+                    : isWebTool
+                        ? 'Web tool'
+                        : isCliTool
+                            ? 'CLI tool'
+                            : 'Embedded tool',
               ),
-              if (hasUpdate)
+              if (isDownloadTool && hasUpdate)
                 const _InfoChip(label: 'Update available', accent: true),
-              if (installed != null)
+              if (isDownloadTool && installed != null)
                 _InfoChip(label: 'Saved to ${installed.path}'),
+              if (isWebTool && tool.url != null)
+                _InfoChip(label: tool.url!),
+              if (isCliTool && tool.command != null)
+                _InfoChip(label: tool.command!),
             ],
           ),
           const SizedBox(height: 16),
-          if (isDownloading)
+          if (isDownloadTool && isDownloading)
             LinearProgressIndicator(
               value: progress == 0 ? null : progress,
               minHeight: 6,
             ),
-          if (isDownloading) const SizedBox(height: 12),
+          if (isDownloadTool && isDownloading) const SizedBox(height: 12),
           Row(
             children: [
-              FilledButton(
-                onPressed: isDownloading ? null : () => _downloadTool(tool),
-                child: Text(installed == null
-                    ? 'Download'
-                    : hasUpdate
-                        ? 'Update'
-                        : 'Re-download'),
-              ),
+              if (isDownloadTool)
+                FilledButton(
+                  onPressed: isDownloading ? null : () => _downloadTool(tool),
+                  child: Text(installed == null
+                      ? 'Download'
+                      : hasUpdate
+                          ? 'Update'
+                          : 'Re-download'),
+                )
+              else if (isWebTool)
+                FilledButton(
+                  onPressed: () => _openWebTool(tool),
+                  child: const Text('Open'),
+                )
+              else if (isCliTool)
+                FilledButton(
+                  onPressed: () => _runCliTool(tool),
+                  child: const Text('Run'),
+                )
+              else
+                FilledButton(
+                  onPressed: () => _openWebTool(tool),
+                  child: const Text('Open'),
+                ),
               const SizedBox(width: 12),
-              if (installed != null)
+              if (isDownloadTool && installed != null)
                 Text(
                   installed.updatedAt,
                   style: theme.textTheme.bodyMedium
@@ -743,6 +803,229 @@ class _StaggeredReveal extends StatelessWidget {
         );
       },
       child: child,
+    );
+  }
+}
+
+class WebToolDialog extends StatefulWidget {
+  const WebToolDialog({super.key, required this.title, required this.url});
+
+  final String title;
+  final String url;
+
+  @override
+  State<WebToolDialog> createState() => _WebToolDialogState();
+}
+
+class _WebToolDialogState extends State<WebToolDialog> {
+  late final WebViewController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    final uri = _buildUri(widget.url);
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..loadRequest(uri);
+  }
+
+  Uri _buildUri(String input) {
+    final value = input.trim();
+    if (value.startsWith('http://') || value.startsWith('https://')) {
+      return Uri.parse(value);
+    }
+    if (value.startsWith('file://')) {
+      return Uri.parse(value);
+    }
+    return Uri.file(value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      insetPadding: const EdgeInsets.all(24),
+      child: SizedBox(
+        width: 960,
+        height: 640,
+        child: Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              color: const Color(0xFF0E3A53),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      widget.title,
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleMedium
+                          ?.copyWith(color: Colors.white),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close, color: Colors.white),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: WebViewWidget(controller: _controller),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class CliToolDialog extends StatefulWidget {
+  const CliToolDialog({
+    super.key,
+    required this.title,
+    required this.command,
+    required this.args,
+    this.workingDir,
+  });
+
+  final String title;
+  final String command;
+  final List<String> args;
+  final String? workingDir;
+
+  @override
+  State<CliToolDialog> createState() => _CliToolDialogState();
+}
+
+class _CliToolDialogState extends State<CliToolDialog> {
+  final List<String> _lines = [];
+  Process? _process;
+  bool _running = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _start();
+  }
+
+  @override
+  void dispose() {
+    _process?.kill(ProcessSignal.sigterm);
+    super.dispose();
+  }
+
+  Future<void> _start() async {
+    if (_running) return;
+    setState(() {
+      _running = true;
+      _lines.clear();
+    });
+    try {
+      final process = await Process.start(
+        widget.command,
+        widget.args,
+        runInShell: true,
+        workingDirectory: widget.workingDir,
+      );
+      _process = process;
+      _appendLine('Running: ${widget.command} ${widget.args.join(' ')}');
+      process.stdout
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .listen(_appendLine);
+      process.stderr
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .listen((line) => _appendLine('[err] $line'));
+      final code = await process.exitCode;
+      _appendLine('Process exited with code $code');
+    } catch (err) {
+      _appendLine('Failed to start process: $err');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _running = false;
+        });
+      }
+    }
+  }
+
+  void _appendLine(String line) {
+    if (!mounted) return;
+    setState(() {
+      _lines.add(line);
+      if (_lines.length > 500) {
+        _lines.removeRange(0, _lines.length - 500);
+      }
+    });
+  }
+
+  void _stop() {
+    _process?.kill(ProcessSignal.sigterm);
+    _appendLine('Process terminated.');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      insetPadding: const EdgeInsets.all(24),
+      child: SizedBox(
+        width: 900,
+        height: 560,
+        child: Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              color: const Color(0xFF1B1A17),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      widget.title,
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleMedium
+                          ?.copyWith(color: Colors.white),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: _running ? null : _start,
+                    child: const Text('Run again'),
+                  ),
+                  const SizedBox(width: 8),
+                  TextButton(
+                    onPressed: _running ? _stop : null,
+                    child: const Text('Stop'),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close, color: Colors.white),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: Container(
+                color: const Color(0xFF0E1114),
+                padding: const EdgeInsets.all(12),
+                alignment: Alignment.topLeft,
+                child: SingleChildScrollView(
+                  child: SelectableText(
+                    _lines.join('\n'),
+                    style: const TextStyle(
+                      color: Color(0xFFDDE2E6),
+                      fontFamily: 'Menlo',
+                      fontSize: 12,
+                      height: 1.4,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -1005,6 +1288,11 @@ class Tool {
     required this.version,
     required this.description,
     required this.platforms,
+    required this.type,
+    this.url,
+    this.command,
+    this.args = const [],
+    this.workingDir,
   });
 
   final String enterpriseId;
@@ -1013,13 +1301,28 @@ class Tool {
   final String version;
   final String description;
   final Map<String, ToolPlatform> platforms;
+  final String type;
+  final String? url;
+  final String? command;
+  final List<String> args;
+  final String? workingDir;
 
   factory Tool.fromJson(String enterpriseId, Map<String, dynamic> json) {
-    final platformsJson = json['platforms'] as Map<String, dynamic>;
+    final platformsJson =
+        (json['platforms'] as Map<String, dynamic>?) ?? <String, dynamic>{};
     final platforms = <String, ToolPlatform>{};
     platformsJson.forEach((key, value) {
       platforms[key] = ToolPlatform.fromJson(value as Map<String, dynamic>);
     });
+    final type = (json['type'] as String?) ??
+        (platforms.isNotEmpty ? 'download' : 'web');
+    final rawArgs = json['args'];
+    final args = <String>[];
+    if (rawArgs is List) {
+      args.addAll(rawArgs.map((item) => item.toString()));
+    } else if (rawArgs is String && rawArgs.trim().isNotEmpty) {
+      args.addAll(rawArgs.split(' '));
+    }
     return Tool(
       enterpriseId: enterpriseId,
       id: json['id'] as String,
@@ -1027,6 +1330,11 @@ class Tool {
       version: json['version'] as String,
       description: json['description'] as String? ?? '',
       platforms: platforms,
+      type: type,
+      url: (json['url'] as String?) ?? (json['entrypoint'] as String?),
+      command: json['command'] as String?,
+      args: args,
+      workingDir: json['workingDir'] as String?,
     );
   }
 }

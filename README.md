@@ -41,6 +41,27 @@ The desktop console lives in `app/`.
 - Fallback registry asset: `app/assets/registry.json`
 - Demo users: `app/assets/users.json`
 
+### Tool Types (embedded)
+
+Each tool in `registry.json` can declare a `type`:
+
+- `download` (default): download/update a zip asset
+- `web`: open a URL or local HTML in an embedded webview
+- `cli`: run a command and show output in a modal console
+
+Example:
+```json
+{
+  "id": "my-tool",
+  "name": "My Tool",
+  "version": "1.0.0",
+  "type": "cli",
+  "command": "python",
+  "args": ["tools/my_tool/main.py"],
+  "workingDir": "tools/my_tool"
+}
+```
+
 ## Create a New Tool (Script)
 
 ```
