@@ -2,6 +2,8 @@
 
 A new Flutter project.
 
+CI trigger: rebuild sample tool.
+
 ## Getting Started
 
 This project is a starting point for a Flutter application.
