@@ -31,8 +31,7 @@
           "command": "echo",
           "args": [
             "Hello from CLI tool"
-          ],
-          "workingDir": ""
+          ]
         }
       ]
     },

@@ -831,7 +831,7 @@ class _CliToolDialogState extends State<CliToolDialog> {
         widget.command,
         widget.args,
         runInShell: true,
-        workingDirectory: widget.workingDir,
+        workingDirectory: _normalizeWorkingDir(widget.workingDir),
       );
       _process = process;
       _appendLine('Running: ${widget.command} ${widget.args.join(' ')}');
@@ -1239,9 +1239,15 @@ class Tool {
       url: (json['url'] as String?) ?? (json['entrypoint'] as String?),
       command: json['command'] as String?,
       args: args,
-      workingDir: json['workingDir'] as String?,
+      workingDir: _normalizeWorkingDir(json['workingDir'] as String?),
     );
   }
+}
+
+String? _normalizeWorkingDir(String? value) {
+  if (value == null) return null;
+  final trimmed = value.trim();
+  return trimmed.isEmpty ? null : trimmed;
 }
 
 class ToolPlatform {
