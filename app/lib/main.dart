@@ -386,6 +386,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (context) => CliToolDialog(
         title: tool.name,
         command: command,
