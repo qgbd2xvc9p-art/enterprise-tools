@@ -45,6 +45,28 @@
           }
         }
       ]
+    },
+    {
+      "id": "fmm",
+      "name": "Fmm",
+      "tools": [
+        {
+          "id": "fmmbaobiao",
+          "name": "Fmm Baobiao",
+          "version": "0.1.0",
+          "description": "Manual packaged tool.",
+          "platforms": {
+            "macos": {
+              "asset": "fmm-fmmbaobiao-0.1.0-macos.zip",
+              "url": "https://github.com/qgbd2xvc9p-art/enterprise-tools/releases/latest/download/fmm-fmmbaobiao-0.1.0-macos.zip"
+            },
+            "windows": {
+              "asset": "fmm-fmmbaobiao-0.1.0-windows.zip",
+              "url": "https://github.com/qgbd2xvc9p-art/enterprise-tools/releases/latest/download/fmm-fmmbaobiao-0.1.0-windows.zip"
+            }
+          }
+        }
+      ]
     }
   ]
 }
