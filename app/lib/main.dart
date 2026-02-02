@@ -656,11 +656,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     ? (installed == null
                         ? 'Not installed'
                         : 'Installed v${installed.version}')
-                    : isWebTool
-                        ? 'Web tool'
-                        : isCliTool
-                            ? 'CLI tool'
-                            : 'Embedded tool',
+                    : isCliTool
+                        ? 'CLI tool'
+                        : 'Embedded tool',
               ),
               if (isDownloadTool && hasUpdate)
                 const _InfoChip(label: 'Update available', accent: true),
