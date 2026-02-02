@@ -1,0 +1,50 @@
+{
+  "generatedAt": "2026-02-02",
+  "source": "manual",
+  "enterprises": [
+    {
+      "id": "example-co",
+      "name": "Example Co",
+      "tools": [
+        {
+          "id": "sample-tool",
+          "name": "Sample Tool",
+          "version": "0.1.0",
+          "description": "Starter desktop utility for Example Co.",
+          "platforms": {
+            "macos": {
+              "asset": "example-co-sample-tool-0.1.0-macos.zip",
+              "url": "https://github.com/qgbd2xvc9p-art/enterprise-tools/releases/latest/download/example-co-sample-tool-0.1.0-macos.zip"
+            },
+            "windows": {
+              "asset": "example-co-sample-tool-0.1.0-windows.zip",
+              "url": "https://github.com/qgbd2xvc9p-art/enterprise-tools/releases/latest/download/example-co-sample-tool-0.1.0-windows.zip"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "acme-inc",
+      "name": "Acme Inc",
+      "tools": [
+        {
+          "id": "report-tool",
+          "name": "Report Tool",
+          "version": "0.1.0",
+          "description": "Internal reporting packager.",
+          "platforms": {
+            "macos": {
+              "asset": "acme-inc-report-tool-0.1.0-macos.zip",
+              "url": "https://github.com/qgbd2xvc9p-art/enterprise-tools/releases/latest/download/acme-inc-report-tool-0.1.0-macos.zip"
+            },
+            "windows": {
+              "asset": "acme-inc-report-tool-0.1.0-windows.zip",
+              "url": "https://github.com/qgbd2xvc9p-art/enterprise-tools/releases/latest/download/acme-inc-report-tool-0.1.0-windows.zip"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

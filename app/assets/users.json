@@ -1,0 +1,22 @@
+{
+  "users": [
+    {
+      "username": "admin",
+      "password": "admin123",
+      "roles": ["admin"],
+      "enterprises": ["*"]
+    },
+    {
+      "username": "example",
+      "password": "example123",
+      "roles": ["user"],
+      "enterprises": ["example-co"]
+    },
+    {
+      "username": "acme",
+      "password": "acme123",
+      "roles": ["user"],
+      "enterprises": ["acme-inc"]
+    }
+  ]
+}

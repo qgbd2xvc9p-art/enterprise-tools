@@ -32,3 +32,11 @@ GitHub Actions builds changed tools on push and creates a Release with zip asset
 
 - Windows asset: `<enterprise>-<tool>-<version>-windows.zip`
 - macOS asset: `<enterprise>-<tool>-<version>-macos.zip`
+
+## Desktop Console App
+
+The desktop console lives in `app/`.
+
+- Registry source: `registry.json`
+- Fallback registry asset: `app/assets/registry.json`
+- Demo users: `app/assets/users.json`
