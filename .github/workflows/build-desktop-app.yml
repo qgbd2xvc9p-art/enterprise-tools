@@ -51,8 +51,42 @@ jobs:
           name: enterprise_tools_app-windows
           path: enterprise_tools_app-windows.zip
 
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Enable macOS desktop
+        run: flutter config --enable-macos-desktop
+
+      - name: Install dependencies
+        run: |
+          cd app
+          flutter pub get
+
+      - name: Build (macOS Release)
+        run: |
+          cd app
+          flutter build macos --release
+
+      - name: Package
+        run: |
+          cd app/build/macos/Build/Products/Release
+          ditto -c -k --sequesterRsrc --keepParent enterprise_tools_app.app ../../../../enterprise_tools_app-macos.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: enterprise_tools_app-macos
+          path: app/build/macos/enterprise_tools_app-macos.zip
+
   release:
-    needs: build-windows
+    needs: [build-windows, build-macos]
     runs-on: ubuntu-latest
     if: ${{ inputs.release_tag != '' }}
     steps:
@@ -65,6 +99,6 @@ jobs:
         with:
           tag_name: ${{ inputs.release_tag }}
           name: ${{ inputs.release_tag }}
-          files: dist/**/enterprise_tools_app-windows.zip
+          files: dist/**/enterprise_tools_app-*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
