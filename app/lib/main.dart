@@ -1317,14 +1317,7 @@ class _HomeScreenState extends State<HomeScreen> {
     Enterprise enterprise,
     String query,
   ) {
-    if (enterprise.id.isEmpty) {
-      return Center(
-        child: Text(
-          '没有可访问的企业。',
-          style: theme.textTheme.titleMedium,
-        ),
-      );
-    }
+    final hasEnterprise = enterprise.id.isNotEmpty;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1336,8 +1329,10 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('${enterprise.name} 的工具',
-                      style: theme.textTheme.headlineMedium),
+                  Text(
+                    hasEnterprise ? '${enterprise.name} 的工具' : '暂无企业',
+                    style: theme.textTheme.headlineMedium,
+                  ),
                   const SizedBox(height: 4),
                   Text(
                     '当前平台：${Platform.isMacOS ? 'macOS' : Platform.isWindows ? 'Windows' : '未知'}',
@@ -1364,7 +1359,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     label: const Text('新增企业'),
                   ),
                   OutlinedButton.icon(
-                    onPressed: enterprise.id.isEmpty ? null : _openAddTool,
+                    onPressed: hasEnterprise ? _openAddTool : null,
                     icon: const Icon(Icons.add_box_outlined),
                     label: const Text('新增工具'),
                   ),
@@ -1408,6 +1403,25 @@ class _HomeScreenState extends State<HomeScreen> {
         Expanded(
           child: Builder(
             builder: (context) {
+              if (!hasEnterprise) {
+                return Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '当前没有企业，请先新增。',
+                        style: theme.textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 12),
+                      FilledButton.icon(
+                        onPressed: _openAddEnterprise,
+                        icon: const Icon(Icons.domain_add),
+                        label: const Text('新增企业'),
+                      ),
+                    ],
+                  ),
+                );
+              }
               final tools = _filterToolsForEnterprise(enterprise, query);
               if (tools.isEmpty) {
                 return Center(
