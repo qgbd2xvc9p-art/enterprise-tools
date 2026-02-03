@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 
 const String registryUrl =
     'https://raw.githubusercontent.com/qgbd2xvc9p-art/enterprise-tools/main/registry.json';
+const bool kLocalOnlyMode = true;
 
 void main() {
   runApp(const EnterpriseToolsApp());
@@ -25,6 +26,19 @@ class EnterpriseToolsApp extends StatefulWidget {
 class _EnterpriseToolsAppState extends State<EnterpriseToolsApp> {
   User? _user;
 
+  @override
+  void initState() {
+    super.initState();
+    if (kLocalOnlyMode) {
+      _user = User(
+        username: 'local',
+        password: '',
+        roles: const ['admin'],
+        enterprises: const ['*'],
+      );
+    }
+  }
+
   void _handleLogin(User user) {
     setState(() {
       _user = user;
@@ -32,6 +46,7 @@ class _EnterpriseToolsAppState extends State<EnterpriseToolsApp> {
   }
 
   void _handleLogout() {
+    if (kLocalOnlyMode) return;
     setState(() {
       _user = null;
     });
@@ -70,7 +85,11 @@ class _EnterpriseToolsAppState extends State<EnterpriseToolsApp> {
       theme: theme,
       home: _user == null
           ? LoginScreen(onLogin: _handleLogin)
-          : HomeScreen(user: _user!, onLogout: _handleLogout),
+          : HomeScreen(
+              user: _user!,
+              onLogout: _handleLogout,
+              localOnlyMode: kLocalOnlyMode,
+            ),
     );
   }
 }
@@ -279,10 +298,16 @@ class _LoginScreenState extends State<LoginScreen> {
 }
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key, required this.user, required this.onLogout});
+  const HomeScreen({
+    super.key,
+    required this.user,
+    required this.onLogout,
+    required this.localOnlyMode,
+  });
 
   final User user;
   final VoidCallback onLogout;
+  final bool localOnlyMode;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -322,8 +347,12 @@ class _HomeScreenState extends State<HomeScreen> {
       if (force) {
         RegistryService.clearCache();
       }
-      final settings = await LocalStore.loadSettings();
-      final registry = await RegistryService.loadRegistry(settings: settings);
+      final settings =
+          widget.localOnlyMode ? null : await LocalStore.loadSettings();
+      final registry = await RegistryService.loadRegistry(
+        settings: settings,
+        localOnlyMode: widget.localOnlyMode,
+      );
       final installed = await LocalStore.loadInstalled();
       final visible = _filterEnterprises(registry.enterprises);
       setState(() {
@@ -539,6 +568,82 @@ class _HomeScreenState extends State<HomeScreen> {
     _showSnack('打开失败：${lastError ?? '未知错误'}');
   }
 
+  Future<void> _exportToolPackages(Tool tool) async {
+    final selection = await showDialog<ExportSelection>(
+      context: context,
+      builder: (context) => ExportToolDialog(tool: tool),
+    );
+    if (selection == null) return;
+    final outputDir = await FilePicker.platform.getDirectoryPath();
+    if (outputDir == null || outputDir.trim().isEmpty) {
+      _showSnack('已取消导出。');
+      return;
+    }
+
+    _showSnack('正在打包，请稍候…');
+    _ScopedAccess? macAccess;
+    _ScopedAccess? winAccess;
+    _ScopedAccess? outAccess;
+    try {
+      macAccess = await _startAccess(selection.macosPath);
+      if (Platform.isMacOS && macAccess == null) {
+        _showSnack('无法访问 macOS 路径，请重新选择。');
+        return;
+      }
+      winAccess = await _startAccess(selection.windowsPath);
+      if (Platform.isMacOS && winAccess == null) {
+        _showSnack('无法访问 Windows 路径，请重新选择。');
+        return;
+      }
+      outAccess = await _startAccess(outputDir);
+      if (Platform.isMacOS && outAccess == null) {
+        _showSnack('无法访问导出目录，请重新选择。');
+        return;
+      }
+
+      await Directory(outputDir).create(recursive: true);
+      final macName = _buildExportZipName(tool, 'macos');
+      final winName = _buildExportZipName(tool, 'windows');
+      final macTarget = '$outputDir/$macName';
+      final winTarget = '$outputDir/$winName';
+      final macFile = await _zipSourceTo(selection.macosPath, macTarget);
+      final winFile = await _zipSourceTo(selection.windowsPath, winTarget);
+      _showSnack('已导出：${macFile.path} / ${winFile.path}');
+    } catch (err) {
+      _showSnack('导出失败：${err.toString()}');
+    } finally {
+      await _stopAccess(macAccess);
+      await _stopAccess(winAccess);
+      await _stopAccess(outAccess);
+    }
+  }
+
+  Future<_ScopedAccess?> _startAccess(String path) async {
+    if (!Platform.isMacOS) return null;
+    String? bookmark = await LocalStore.loadBookmark(path);
+    if (bookmark == null || bookmark.isEmpty) {
+      try {
+        bookmark = await BookmarkService.createBookmark(path);
+        if (bookmark != null && bookmark.isNotEmpty) {
+          await LocalStore.saveBookmark(path, bookmark);
+        }
+      } catch (_) {
+        return null;
+      }
+    }
+    if (bookmark == null || bookmark.isEmpty) return null;
+    final ok = await BookmarkService.startAccess(bookmark);
+    if (!ok) return null;
+    return _ScopedAccess(bookmark);
+  }
+
+  Future<void> _stopAccess(_ScopedAccess? access) async {
+    if (access == null) return;
+    try {
+      await BookmarkService.stopAccess(access.bookmark);
+    } catch (_) {}
+  }
+
   void _runCliTool(Tool tool) {
     final command = tool.command;
     if (command == null || command.trim().isEmpty) {
@@ -564,6 +669,10 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _openSettings() async {
+    if (widget.localOnlyMode) {
+      _showSnack('本地模式无需设置 GitHub。');
+      return;
+    }
     final current = _settings ?? GitHubSettings.defaultSettings();
     final result = await showDialog<GitHubSettings>(
       context: context,
@@ -583,9 +692,18 @@ class _HomeScreenState extends State<HomeScreen> {
     if (registry == null) return;
     final result = await showDialog<Enterprise>(
       context: context,
-      builder: (context) => AddEnterpriseDialog(existing: registry.enterprises),
+      builder: (context) => AddEnterpriseDialog(
+        existing: registry.enterprises,
+        localOnlyMode: widget.localOnlyMode,
+      ),
     );
     if (result == null) return;
+    if (widget.localOnlyMode) {
+      await _saveLocalRegistryUpdate((data) {
+        data.enterprises.add(result.copyWith(localOnly: true));
+      });
+      return;
+    }
     if (result.localOnly) {
       await _saveLocalRegistryUpdate((data) {
         data.enterprises.add(result);
@@ -603,6 +721,16 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (context) => EditEnterpriseDialog(enterprise: enterprise),
     );
     if (result == null) return;
+    if (widget.localOnlyMode) {
+      await _saveLocalRegistryUpdate((data) {
+        final index = data.enterprises.indexWhere((e) => e.id == enterprise.id);
+        if (index < 0) return;
+        final target = data.enterprises[index];
+        data.enterprises[index] =
+            target.copyWith(name: result.name, localOnly: true);
+      });
+      return;
+    }
     if (enterprise.localOnly) {
       await _saveLocalRegistryUpdate((data) {
         final index = data.enterprises.indexWhere((e) => e.id == enterprise.id);
@@ -629,7 +757,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
     if (confirmed != true) return;
-    if (enterprise.localOnly) {
+    if (widget.localOnlyMode || enterprise.localOnly) {
       await _saveLocalRegistryUpdate((data) {
         data.enterprises.removeWhere((e) => e.id == enterprise.id);
       });
@@ -654,10 +782,39 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (context) => AddToolDialog(
         enterprises: registry.enterprises,
         selectedEnterpriseId: _selectedEnterpriseId,
-        settings: _settings,
+        settings: widget.localOnlyMode ? null : _settings,
+        localOnlyMode: widget.localOnlyMode,
       ),
     );
     if (result == null) return;
+    if (widget.localOnlyMode) {
+      final name = registry.enterprises
+          .firstWhere(
+            (e) => e.id == result.enterpriseId,
+            orElse: () => Enterprise.empty(),
+          )
+          .name;
+      await _saveLocalRegistryUpdate((data) {
+        final enterprise = data.enterprises.firstWhere(
+          (e) => e.id == result.enterpriseId,
+          orElse: () => Enterprise.empty(),
+        );
+        final localTool = result.copyWith(localOnly: true);
+        if (enterprise.id.isEmpty) {
+          data.enterprises.add(
+            Enterprise(
+              id: result.enterpriseId,
+              name: name.isNotEmpty ? name : result.enterpriseId,
+              tools: [localTool],
+              localOnly: true,
+            ),
+          );
+        } else {
+          enterprise.tools.add(localTool);
+        }
+      });
+      return;
+    }
     if (result.localOnly) {
       final name = registry.enterprises
           .firstWhere(
@@ -706,11 +863,26 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (context) => EditToolDialog(
         tool: tool,
         enterprises: _registry?.enterprises ?? [],
-        settings: _settings,
+        settings: widget.localOnlyMode ? null : _settings,
+        localOnlyMode: widget.localOnlyMode,
       ),
     );
     if (result == null) return;
-    if (tool.localOnly) {
+    if (widget.localOnlyMode) {
+      await _saveLocalRegistryUpdate((data) {
+        final enterprise = data.enterprises.firstWhere(
+          (e) => e.id == tool.enterpriseId,
+          orElse: () => Enterprise.empty(),
+        );
+        if (enterprise.id.isEmpty) return;
+        final index = enterprise.tools.indexWhere((t) => t.id == tool.id);
+        if (index >= 0) {
+          enterprise.tools[index] = result.copyWith(localOnly: true);
+        }
+      });
+      return;
+    }
+    if (widget.localOnlyMode || tool.localOnly) {
       await _saveLocalRegistryUpdate((data) {
         final enterprise = data.enterprises.firstWhere(
           (e) => e.id == tool.enterpriseId,
@@ -766,6 +938,10 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _saveRegistryUpdate(void Function(Registry data) mutate) async {
+    if (widget.localOnlyMode) {
+      _showSnack('本地模式不会写入 GitHub。');
+      return;
+    }
     final registry = _registry;
     final settings = _settings;
     if (registry == null) return;
@@ -781,7 +957,10 @@ class _HomeScreenState extends State<HomeScreen> {
         registry: updated.remoteOnly(),
       );
       RegistryService.clearCache();
-      final refreshed = await RegistryService.loadRegistry(settings: settings);
+      final refreshed = await RegistryService.loadRegistry(
+        settings: settings,
+        localOnlyMode: widget.localOnlyMode,
+      );
       setState(() {
         _registry = refreshed;
       });
@@ -797,7 +976,10 @@ class _HomeScreenState extends State<HomeScreen> {
     mutate(updated);
     await LocalStore.saveLocalRegistry(updated);
     RegistryService.clearCache();
-    final refreshed = await RegistryService.loadRegistry(settings: _settings);
+    final refreshed = await RegistryService.loadRegistry(
+      settings: _settings,
+      localOnlyMode: widget.localOnlyMode,
+    );
     setState(() {
       _registry = refreshed;
     });
@@ -1087,29 +1269,41 @@ class _HomeScreenState extends State<HomeScreen> {
             child: _sidebarCollapsed
                 ? Column(
                     children: [
-                      const Icon(Icons.verified_user, size: 18),
-                      const SizedBox(height: 6),
-                      IconButton(
-                        tooltip: '退出登录',
-                        onPressed: widget.onLogout,
-                        icon: const Icon(Icons.logout),
+                      Icon(
+                        widget.localOnlyMode
+                            ? Icons.laptop_mac
+                            : Icons.verified_user,
+                        size: 18,
                       ),
+                      const SizedBox(height: 6),
+                      if (!widget.localOnlyMode)
+                        IconButton(
+                          tooltip: '退出登录',
+                          onPressed: widget.onLogout,
+                          icon: const Icon(Icons.logout),
+                        ),
                     ],
                   )
                 : Row(
                     children: [
-                      const Icon(Icons.verified_user, size: 18),
+                      Icon(
+                        widget.localOnlyMode
+                            ? Icons.laptop_mac
+                            : Icons.verified_user,
+                        size: 18,
+                      ),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          widget.user.username,
+                          widget.localOnlyMode ? '本地模式' : widget.user.username,
                           style: theme.textTheme.bodyMedium,
                         ),
                       ),
-                      TextButton(
-                        onPressed: widget.onLogout,
-                        child: const Text('退出登录'),
-                      )
+                      if (!widget.localOnlyMode)
+                        TextButton(
+                          onPressed: widget.onLogout,
+                          child: const Text('退出登录'),
+                        )
                     ],
                   ),
           ),
@@ -1174,18 +1368,19 @@ class _HomeScreenState extends State<HomeScreen> {
                     icon: const Icon(Icons.add_box_outlined),
                     label: const Text('新增工具'),
                   ),
-                  IconButton(
-                    onPressed: _openSettings,
-                    tooltip: '设置',
-                    icon: const Icon(Icons.settings),
-                  ),
+                  if (!widget.localOnlyMode)
+                    IconButton(
+                      onPressed: _openSettings,
+                      tooltip: '设置',
+                      icon: const Icon(Icons.settings),
+                    ),
                 ],
               ),
             ),
           ],
         ),
         const SizedBox(height: 16),
-        if (_tokenExpiryWarning() != null) ...[
+        if (!widget.localOnlyMode && _tokenExpiryWarning() != null) ...[
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
@@ -1256,6 +1451,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   String? _tokenExpiryWarning() {
+    if (widget.localOnlyMode) return null;
     final expiry = _settings?.tokenExpiry.trim() ?? '';
     final date = _parseDate(expiry);
     if (date == null) return null;
@@ -1414,6 +1610,13 @@ class _HomeScreenState extends State<HomeScreen> {
                   label: const Text('打开/运行'),
                 ),
               const SizedBox(width: 12),
+              if (widget.localOnlyMode)
+                OutlinedButton.icon(
+                  onPressed: () => _exportToolPackages(tool),
+                  icon: const Icon(Icons.archive),
+                  label: const Text('打包/导出'),
+                ),
+              if (widget.localOnlyMode) const SizedBox(width: 12),
               if ((isDownloadTool || isLocalTool) && installed != null)
                 Text(
                   installed.updatedAt,
@@ -1787,9 +1990,14 @@ class _GitHubSettingsDialogState extends State<GitHubSettingsDialog> {
 }
 
 class AddEnterpriseDialog extends StatefulWidget {
-  const AddEnterpriseDialog({super.key, required this.existing});
+  const AddEnterpriseDialog({
+    super.key,
+    required this.existing,
+    required this.localOnlyMode,
+  });
 
   final List<Enterprise> existing;
+  final bool localOnlyMode;
 
   @override
   State<AddEnterpriseDialog> createState() => _AddEnterpriseDialogState();
@@ -1820,7 +2028,12 @@ class _AddEnterpriseDialogState extends State<AddEnterpriseDialog> {
       return;
     }
     Navigator.of(context).pop(
-      Enterprise(id: id, name: name, tools: [], localOnly: _localOnly),
+      Enterprise(
+        id: id,
+        name: name,
+        tools: [],
+        localOnly: widget.localOnlyMode ? true : _localOnly,
+      ),
     );
   }
 
@@ -1849,14 +2062,26 @@ class _AddEnterpriseDialogState extends State<AddEnterpriseDialog> {
               ),
             ),
             const SizedBox(height: 12),
-            CheckboxListTile(
-              value: _localOnly,
-              onChanged: (value) =>
-                  setState(() => _localOnly = value ?? false),
-              contentPadding: EdgeInsets.zero,
-              controlAffinity: ListTileControlAffinity.leading,
-              title: const Text('仅本地保存（不写回 GitHub）'),
-            ),
+            if (!widget.localOnlyMode)
+              CheckboxListTile(
+                value: _localOnly,
+                onChanged: (value) =>
+                    setState(() => _localOnly = value ?? false),
+                contentPadding: EdgeInsets.zero,
+                controlAffinity: ListTileControlAffinity.leading,
+                title: const Text('仅本地保存（不写回 GitHub）'),
+              )
+            else
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  '本地模式：企业仅保存到当前电脑。',
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodyMedium
+                      ?.copyWith(color: Colors.black54),
+                ),
+              ),
             if (_error != null) ...[
               const SizedBox(height: 8),
               Text(_error!, style: const TextStyle(color: Color(0xFFB94A48))),
@@ -1878,14 +2103,205 @@ class AddToolDialog extends StatefulWidget {
     required this.enterprises,
     required this.selectedEnterpriseId,
     required this.settings,
+    required this.localOnlyMode,
   });
 
   final List<Enterprise> enterprises;
   final String? selectedEnterpriseId;
   final GitHubSettings? settings;
+  final bool localOnlyMode;
 
   @override
   State<AddToolDialog> createState() => _AddToolDialogState();
+}
+
+class ExportSelection {
+  ExportSelection({required this.macosPath, required this.windowsPath});
+
+  final String macosPath;
+  final String windowsPath;
+}
+
+class ExportToolDialog extends StatefulWidget {
+  const ExportToolDialog({super.key, required this.tool});
+
+  final Tool tool;
+
+  @override
+  State<ExportToolDialog> createState() => _ExportToolDialogState();
+}
+
+class _ExportToolDialogState extends State<ExportToolDialog> {
+  String? _macPath;
+  String? _winPath;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    final local = widget.tool.localPath;
+    if (local != null && local.trim().isNotEmpty) {
+      if (Platform.isMacOS) {
+        _macPath = local;
+      } else if (Platform.isWindows) {
+        _winPath = local;
+      }
+    }
+  }
+
+  Future<void> _pickFile(String platform) async {
+    final result = await FilePicker.platform.pickFiles();
+    final path = result?.files.single.path;
+    if (path == null) return;
+    _setPath(platform, path);
+  }
+
+  Future<void> _pickFolder(String platform) async {
+    final path = await FilePicker.platform.getDirectoryPath();
+    if (path == null) return;
+    _setPath(platform, path);
+  }
+
+  void _setPath(String platform, String path) {
+    setState(() {
+      if (platform == 'macos') {
+        _macPath = path;
+      } else {
+        _winPath = path;
+      }
+      _error = null;
+    });
+    _storeBookmark(path);
+  }
+
+  Future<void> _storeBookmark(String path) async {
+    if (!Platform.isMacOS) return;
+    try {
+      final bookmark = await BookmarkService.createBookmark(path);
+      if (bookmark != null && bookmark.isNotEmpty) {
+        await LocalStore.saveBookmark(path, bookmark);
+      }
+    } catch (_) {}
+  }
+
+  void _submit() {
+    if (_macPath == null || _macPath!.trim().isEmpty) {
+      setState(() => _error = '请选择 macOS 文件/文件夹。');
+      return;
+    }
+    if (_winPath == null || _winPath!.trim().isEmpty) {
+      setState(() => _error = '请选择 Windows 文件/文件夹。');
+      return;
+    }
+    Navigator.of(context).pop(
+      ExportSelection(macosPath: _macPath!, windowsPath: _winPath!),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('打包导出'),
+      content: SizedBox(
+        width: 520,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('macOS 包', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 6),
+              Text(
+                _macPath ?? '未选择',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodyMedium
+                    ?.copyWith(color: Colors.black54),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: () => _pickFile('macos'),
+                    icon: const Icon(Icons.upload_file),
+                    label: const Text('选择文件'),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: () => _pickFolder('macos'),
+                    icon: const Icon(Icons.folder_open),
+                    label: const Text('选择文件夹'),
+                  ),
+                  if (_macPath != null) ...[
+                    const SizedBox(width: 6),
+                    IconButton(
+                      tooltip: '清除',
+                      onPressed: () => setState(() => _macPath = null),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 16),
+              Text('Windows 包',
+                  style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 6),
+              Text(
+                _winPath ?? '未选择',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodyMedium
+                    ?.copyWith(color: Colors.black54),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: () => _pickFile('windows'),
+                    icon: const Icon(Icons.upload_file),
+                    label: const Text('选择文件'),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: () => _pickFolder('windows'),
+                    icon: const Icon(Icons.folder_open),
+                    label: const Text('选择文件夹'),
+                  ),
+                  if (_winPath != null) ...[
+                    const SizedBox(width: 6),
+                    IconButton(
+                      tooltip: '清除',
+                      onPressed: () => setState(() => _winPath = null),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
+                ],
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 10),
+                Text(_error!, style: const TextStyle(color: Color(0xFFB94A48))),
+              ],
+              const SizedBox(height: 6),
+              Text(
+                '说明：接下来会让你选择导出目录，并生成两个 zip 文件。',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: Colors.black54),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('下一步')),
+      ],
+    );
+  }
 }
 
 class _AddToolDialogState extends State<AddToolDialog> {
@@ -1916,7 +2332,7 @@ class _AddToolDialogState extends State<AddToolDialog> {
       (e) => e.id == _enterpriseId,
       orElse: () => Enterprise.empty(),
     );
-    _localOnly = initialEnterprise.localOnly;
+    _localOnly = widget.localOnlyMode ? true : initialEnterprise.localOnly;
   }
 
   @override
@@ -1959,7 +2375,7 @@ class _AddToolDialogState extends State<AddToolDialog> {
         _localPathController.text = path;
         _storeBookmark(path);
       }
-      if (_type == 'download') {
+      if (_type == 'download' && !widget.localOnlyMode) {
         _localOnly = false;
       }
     });
@@ -2000,6 +2416,7 @@ class _AddToolDialogState extends State<AddToolDialog> {
       return;
     }
     final desc = _descController.text.trim();
+    final localOnly = widget.localOnlyMode ? true : _localOnly;
     if (_type == 'cli') {
       final command = _commandController.text.trim();
       if (command.isEmpty) {
@@ -2018,7 +2435,7 @@ class _AddToolDialogState extends State<AddToolDialog> {
         command: command,
         args: args,
         workingDir: _workingDirController.text.trim(),
-        localOnly: _localOnly,
+        localOnly: localOnly,
       );
       Navigator.of(context).pop(tool);
       return;
@@ -2038,7 +2455,7 @@ class _AddToolDialogState extends State<AddToolDialog> {
         platforms: const {},
         type: 'local',
         localPath: localPath,
-        localOnly: _localOnly,
+        localOnly: localOnly,
       );
       Navigator.of(context).pop(tool);
       return;
@@ -2046,6 +2463,10 @@ class _AddToolDialogState extends State<AddToolDialog> {
 
     final hasLocalUpload = _macLocalPath != null || _winLocalPath != null;
     if (hasLocalUpload) {
+      if (widget.localOnlyMode) {
+        setState(() => _error = '本地模式不支持上传，请改用下载地址或本地工具。');
+        return;
+      }
       final settings = widget.settings;
       if (settings == null || !settings.isValid) {
         setState(() => _error = '请先在“设置”中配置 GitHub 权限后再上传。');
@@ -2102,7 +2523,7 @@ class _AddToolDialogState extends State<AddToolDialog> {
           description: desc,
           platforms: platforms,
           type: 'download',
-          localOnly: false,
+          localOnly: localOnly,
         );
         Navigator.of(context).pop(tool);
       } catch (err) {
@@ -2142,7 +2563,7 @@ class _AddToolDialogState extends State<AddToolDialog> {
       description: desc,
       platforms: platforms,
       type: 'download',
-      localOnly: _localOnly,
+      localOnly: localOnly,
     );
     Navigator.of(context).pop(tool);
   }
@@ -2171,7 +2592,8 @@ class _AddToolDialogState extends State<AddToolDialog> {
                       (e) => e.id == value,
                       orElse: () => Enterprise.empty(),
                     );
-                    _localOnly = enterprise.localOnly;
+                    _localOnly =
+                        widget.localOnlyMode ? true : enterprise.localOnly;
                   });
                 },
                 decoration: const InputDecoration(
@@ -2236,42 +2658,45 @@ class _AddToolDialogState extends State<AddToolDialog> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                Row(
-                  children: [
-                    OutlinedButton.icon(
-                      onPressed: _saving ? null : () => _pickLocalFile('macos'),
-                      icon: const Icon(Icons.upload_file),
-                      label: const Text('选择 macOS 文件'),
-                    ),
-                    const SizedBox(width: 8),
-                    OutlinedButton.icon(
-                      onPressed: _saving ? null : () => _pickLocalFolder('macos'),
-                      icon: const Icon(Icons.folder_open),
-                      label: const Text('选择 macOS 文件夹'),
-                    ),
-                    if (_macLocalPath != null) ...[
-                      const SizedBox(width: 4),
-                      IconButton(
-                        tooltip: '清除',
-                        onPressed: _saving
-                            ? null
-                            : () => setState(() => _macLocalPath = null),
-                        icon: const Icon(Icons.close),
+                if (!widget.localOnlyMode) ...[
+                  Row(
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: _saving ? null : () => _pickLocalFile('macos'),
+                        icon: const Icon(Icons.upload_file),
+                        label: const Text('选择 macOS 文件'),
                       ),
+                      const SizedBox(width: 8),
+                      OutlinedButton.icon(
+                        onPressed:
+                            _saving ? null : () => _pickLocalFolder('macos'),
+                        icon: const Icon(Icons.folder_open),
+                        label: const Text('选择 macOS 文件夹'),
+                      ),
+                      if (_macLocalPath != null) ...[
+                        const SizedBox(width: 4),
+                        IconButton(
+                          tooltip: '清除',
+                          onPressed: _saving
+                              ? null
+                              : () => setState(() => _macLocalPath = null),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
                     ],
-                  ],
-                ),
-                if (_macLocalPath != null) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    '已选择：$_macLocalPath',
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodySmall
-                        ?.copyWith(color: Colors.black54),
                   ),
+                  if (_macLocalPath != null) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      '已选择：$_macLocalPath',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: Colors.black54),
+                    ),
+                  ],
                 ],
                 const SizedBox(height: 12),
                 TextField(
@@ -2282,52 +2707,67 @@ class _AddToolDialogState extends State<AddToolDialog> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                Row(
-                  children: [
-                    OutlinedButton.icon(
-                      onPressed: _saving ? null : () => _pickLocalFile('windows'),
-                      icon: const Icon(Icons.upload_file),
-                      label: const Text('选择 Windows 文件'),
-                    ),
-                    const SizedBox(width: 8),
-                    OutlinedButton.icon(
-                      onPressed:
-                          _saving ? null : () => _pickLocalFolder('windows'),
-                      icon: const Icon(Icons.folder_open),
-                      label: const Text('选择 Windows 文件夹'),
-                    ),
-                    if (_winLocalPath != null) ...[
-                      const SizedBox(width: 4),
-                      IconButton(
-                        tooltip: '清除',
-                        onPressed: _saving
-                            ? null
-                            : () => setState(() => _winLocalPath = null),
-                        icon: const Icon(Icons.close),
+                if (!widget.localOnlyMode) ...[
+                  Row(
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed:
+                            _saving ? null : () => _pickLocalFile('windows'),
+                        icon: const Icon(Icons.upload_file),
+                        label: const Text('选择 Windows 文件'),
                       ),
+                      const SizedBox(width: 8),
+                      OutlinedButton.icon(
+                        onPressed:
+                            _saving ? null : () => _pickLocalFolder('windows'),
+                        icon: const Icon(Icons.folder_open),
+                        label: const Text('选择 Windows 文件夹'),
+                      ),
+                      if (_winLocalPath != null) ...[
+                        const SizedBox(width: 4),
+                        IconButton(
+                          tooltip: '清除',
+                          onPressed: _saving
+                              ? null
+                              : () => setState(() => _winLocalPath = null),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
                     ],
-                  ],
-                ),
-                if (_winLocalPath != null) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    '已选择：$_winLocalPath',
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodySmall
-                        ?.copyWith(color: Colors.black54),
                   ),
-                ],
-                if (_macLocalPath != null || _winLocalPath != null) ...[
+                  if (_winLocalPath != null) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      '已选择：$_winLocalPath',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: Colors.black54),
+                    ),
+                  ],
+                  if (_macLocalPath != null || _winLocalPath != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      '将自动上传到 GitHub，供所有人下载。',
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: Colors.black54),
+                    ),
+                  ],
+                ] else ...[
                   const SizedBox(height: 8),
-                  Text(
-                    '将自动上传到 GitHub，供所有人下载。',
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodySmall
-                        ?.copyWith(color: Colors.black54),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      '本地模式不支持上传，请直接填写下载地址。',
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: Colors.black54),
+                    ),
                   ),
                 ],
               ],
@@ -2390,16 +2830,28 @@ class _AddToolDialogState extends State<AddToolDialog> {
                 ),
               ],
               const SizedBox(height: 12),
-              CheckboxListTile(
-                value: _localOnly,
-                onChanged: disableLocalOnly
-                    ? null
-                    : (value) => setState(() => _localOnly = value ?? false),
-                contentPadding: EdgeInsets.zero,
-                controlAffinity: ListTileControlAffinity.leading,
-                title: const Text('仅本地保存（不写回 GitHub）'),
-                subtitle: const Text('本地保存不需要 GitHub 权限'),
-              ),
+              if (!widget.localOnlyMode)
+                CheckboxListTile(
+                  value: _localOnly,
+                  onChanged: disableLocalOnly
+                      ? null
+                      : (value) => setState(() => _localOnly = value ?? false),
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  title: const Text('仅本地保存（不写回 GitHub）'),
+                  subtitle: const Text('本地保存不需要 GitHub 权限'),
+                )
+              else
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    '本地模式：所有工具仅保存到当前电脑。',
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodyMedium
+                        ?.copyWith(color: Colors.black54),
+                  ),
+                ),
               if (_saving) ...[
                 const SizedBox(height: 12),
                 const LinearProgressIndicator(minHeight: 4),
@@ -2520,11 +2972,13 @@ class EditToolDialog extends StatefulWidget {
     required this.tool,
     required this.enterprises,
     required this.settings,
+    required this.localOnlyMode,
   });
 
   final Tool tool;
   final List<Enterprise> enterprises;
   final GitHubSettings? settings;
+  final bool localOnlyMode;
 
   @override
   State<EditToolDialog> createState() => _EditToolDialogState();
@@ -2634,6 +3088,7 @@ class _EditToolDialogState extends State<EditToolDialog> {
       return;
     }
     final desc = _descController.text.trim();
+    final localOnly = widget.localOnlyMode ? true : widget.tool.localOnly;
     if (_type == 'cli') {
       final command = _commandController.text.trim();
       if (command.isEmpty) {
@@ -2653,7 +3108,7 @@ class _EditToolDialogState extends State<EditToolDialog> {
           command: command,
           args: args,
           workingDir: _workingDirController.text.trim(),
-          localOnly: widget.tool.localOnly,
+          localOnly: localOnly,
         ),
       );
       return;
@@ -2674,7 +3129,7 @@ class _EditToolDialogState extends State<EditToolDialog> {
           platforms: const {},
           type: 'local',
           localPath: localPath,
-          localOnly: widget.tool.localOnly,
+          localOnly: localOnly,
         ),
       );
       return;
@@ -2682,6 +3137,10 @@ class _EditToolDialogState extends State<EditToolDialog> {
 
     final hasLocalUpload = _macLocalPath != null || _winLocalPath != null;
     if (hasLocalUpload) {
+      if (widget.localOnlyMode) {
+        setState(() => _error = '本地模式不支持上传，请改用下载地址或本地工具。');
+        return;
+      }
       final settings = widget.settings;
       if (settings == null || !settings.isValid) {
         setState(() => _error = '请先在“设置”中配置 GitHub 权限后再上传。');
@@ -2742,7 +3201,7 @@ class _EditToolDialogState extends State<EditToolDialog> {
             description: desc,
             platforms: platforms,
             type: 'download',
-            localOnly: widget.tool.localOnly,
+            localOnly: localOnly,
           ),
         );
       } catch (err) {
@@ -2785,7 +3244,7 @@ class _EditToolDialogState extends State<EditToolDialog> {
         description: desc,
         platforms: platforms,
         type: 'download',
-        localOnly: widget.tool.localOnly,
+        localOnly: localOnly,
       ),
     );
   }
@@ -2867,42 +3326,45 @@ class _EditToolDialogState extends State<EditToolDialog> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                Row(
-                  children: [
-                    OutlinedButton.icon(
-                      onPressed: _saving ? null : () => _pickLocalFile('macos'),
-                      icon: const Icon(Icons.upload_file),
-                      label: const Text('选择 macOS 文件'),
-                    ),
-                    const SizedBox(width: 8),
-                    OutlinedButton.icon(
-                      onPressed: _saving ? null : () => _pickLocalFolder('macos'),
-                      icon: const Icon(Icons.folder_open),
-                      label: const Text('选择 macOS 文件夹'),
-                    ),
-                    if (_macLocalPath != null) ...[
-                      const SizedBox(width: 4),
-                      IconButton(
-                        tooltip: '清除',
-                        onPressed: _saving
-                            ? null
-                            : () => setState(() => _macLocalPath = null),
-                        icon: const Icon(Icons.close),
+                if (!widget.localOnlyMode) ...[
+                  Row(
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: _saving ? null : () => _pickLocalFile('macos'),
+                        icon: const Icon(Icons.upload_file),
+                        label: const Text('选择 macOS 文件'),
                       ),
+                      const SizedBox(width: 8),
+                      OutlinedButton.icon(
+                        onPressed:
+                            _saving ? null : () => _pickLocalFolder('macos'),
+                        icon: const Icon(Icons.folder_open),
+                        label: const Text('选择 macOS 文件夹'),
+                      ),
+                      if (_macLocalPath != null) ...[
+                        const SizedBox(width: 4),
+                        IconButton(
+                          tooltip: '清除',
+                          onPressed: _saving
+                              ? null
+                              : () => setState(() => _macLocalPath = null),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
                     ],
-                  ],
-                ),
-                if (_macLocalPath != null) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    '已选择：$_macLocalPath',
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodySmall
-                        ?.copyWith(color: Colors.black54),
                   ),
+                  if (_macLocalPath != null) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      '已选择：$_macLocalPath',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: Colors.black54),
+                    ),
+                  ],
                 ],
                 const SizedBox(height: 12),
                 TextField(
@@ -2913,52 +3375,67 @@ class _EditToolDialogState extends State<EditToolDialog> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                Row(
-                  children: [
-                    OutlinedButton.icon(
-                      onPressed: _saving ? null : () => _pickLocalFile('windows'),
-                      icon: const Icon(Icons.upload_file),
-                      label: const Text('选择 Windows 文件'),
-                    ),
-                    const SizedBox(width: 8),
-                    OutlinedButton.icon(
-                      onPressed:
-                          _saving ? null : () => _pickLocalFolder('windows'),
-                      icon: const Icon(Icons.folder_open),
-                      label: const Text('选择 Windows 文件夹'),
-                    ),
-                    if (_winLocalPath != null) ...[
-                      const SizedBox(width: 4),
-                      IconButton(
-                        tooltip: '清除',
-                        onPressed: _saving
-                            ? null
-                            : () => setState(() => _winLocalPath = null),
-                        icon: const Icon(Icons.close),
+                if (!widget.localOnlyMode) ...[
+                  Row(
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed:
+                            _saving ? null : () => _pickLocalFile('windows'),
+                        icon: const Icon(Icons.upload_file),
+                        label: const Text('选择 Windows 文件'),
                       ),
+                      const SizedBox(width: 8),
+                      OutlinedButton.icon(
+                        onPressed:
+                            _saving ? null : () => _pickLocalFolder('windows'),
+                        icon: const Icon(Icons.folder_open),
+                        label: const Text('选择 Windows 文件夹'),
+                      ),
+                      if (_winLocalPath != null) ...[
+                        const SizedBox(width: 4),
+                        IconButton(
+                          tooltip: '清除',
+                          onPressed: _saving
+                              ? null
+                              : () => setState(() => _winLocalPath = null),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
                     ],
-                  ],
-                ),
-                if (_winLocalPath != null) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    '已选择：$_winLocalPath',
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodySmall
-                        ?.copyWith(color: Colors.black54),
                   ),
-                ],
-                if (_macLocalPath != null || _winLocalPath != null) ...[
+                  if (_winLocalPath != null) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      '已选择：$_winLocalPath',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: Colors.black54),
+                    ),
+                  ],
+                  if (_macLocalPath != null || _winLocalPath != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      '将自动上传到 GitHub，供所有人下载。',
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: Colors.black54),
+                    ),
+                  ],
+                ] else ...[
                   const SizedBox(height: 8),
-                  Text(
-                    '将自动上传到 GitHub，供所有人下载。',
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodySmall
-                        ?.copyWith(color: Colors.black54),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      '本地模式不支持上传，请直接填写下载地址。',
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: Colors.black54),
+                    ),
                   ),
                 ],
               ],
@@ -3215,10 +3692,19 @@ class _CliToolDialogState extends State<CliToolDialog> {
 class RegistryService {
   static Registry? _cache;
 
-  static Future<Registry> loadRegistry({GitHubSettings? settings}) async {
+  static Future<Registry> loadRegistry({
+    GitHubSettings? settings,
+    bool localOnlyMode = false,
+  }) async {
     if (_cache != null) {
       return _cache!;
     }
+    if (localOnlyMode) {
+      final local = await LocalStore.loadLocalRegistry();
+      _cache = local;
+      return _cache!;
+    }
+
     String? content;
     if (settings != null && settings.isValid) {
       try {
@@ -3600,6 +4086,12 @@ class _RepoInfo {
 
   final String owner;
   final String name;
+}
+
+class _ScopedAccess {
+  _ScopedAccess(this.bookmark);
+
+  final String bookmark;
 }
 
 class BookmarkService {
@@ -4231,6 +4723,11 @@ String _assetFromUrl(
   return '$enterpriseId-$toolId-$version-$platform.zip';
 }
 
+String _buildExportZipName(Tool tool, String platform) {
+  final version = tool.version.trim().isEmpty ? '0.0.0' : tool.version.trim();
+  return '${tool.enterpriseId}-${tool.id}-$version-$platform.zip';
+}
+
 String _basename(String path) {
   final normalized = path.replaceAll('\\', '/');
   final parts = normalized.split('/');
@@ -4262,6 +4759,55 @@ String _relativePath(String base, String path) {
     return pathNorm.substring(baseNorm.length);
   }
   return _basename(pathNorm);
+}
+
+Future<File> _zipSourceTo(String sourcePath, String targetPath) async {
+  final type = FileSystemEntity.typeSync(sourcePath);
+  if (type == FileSystemEntityType.notFound) {
+    throw Exception('本地路径不存在：$sourcePath');
+  }
+  final targetFile = File(targetPath);
+  if (await targetFile.exists()) {
+    await targetFile.delete();
+  }
+  if (type == FileSystemEntityType.file) {
+    final source = File(sourcePath);
+    if (source.path.toLowerCase().endsWith('.zip')) {
+      await source.copy(targetFile.path);
+      return targetFile;
+    }
+    final archive = Archive();
+    final bytes = await source.readAsBytes();
+    archive.addFile(ArchiveFile(_basename(source.path), bytes.length, bytes));
+    final zipData = ZipEncoder().encode(archive);
+    if (zipData == null) {
+      throw Exception('压缩失败');
+    }
+    await targetFile.writeAsBytes(zipData, flush: true);
+    return targetFile;
+  }
+  if (type == FileSystemEntityType.directory) {
+    final archive = Archive();
+    final dir = Directory(sourcePath);
+    final basePath = dir.path;
+    final rootName = _basename(basePath);
+    await for (final entity
+        in dir.list(recursive: true, followLinks: false)) {
+      if (entity is File) {
+        final bytes = await entity.readAsBytes();
+        final relative = _relativePath(basePath, entity.path);
+        final entryName = '$rootName/$relative';
+        archive.addFile(ArchiveFile(entryName, bytes.length, bytes));
+      }
+    }
+    final zipData = ZipEncoder().encode(archive);
+    if (zipData == null) {
+      throw Exception('压缩失败');
+    }
+    await targetFile.writeAsBytes(zipData, flush: true);
+    return targetFile;
+  }
+  throw Exception('不支持的路径类型');
 }
 
 Future<void> _copyDirectory(Directory source, Directory destination) async {
