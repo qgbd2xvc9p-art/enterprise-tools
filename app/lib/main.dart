@@ -545,10 +545,21 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _installLocalTool(Tool tool) async {
-    final path = tool.localPath;
-    if (path == null || path.trim().isEmpty) {
+    final rawPath = tool.localPath;
+    if (rawPath == null || rawPath.trim().isEmpty) {
       _showSnack('未配置本地路径。');
       return;
+    }
+    var path = rawPath.trim();
+    final latest = await _findLatestSiblingPath(path);
+    if (latest != null) {
+      final originalModified = await _entityModified(path);
+      final latestModified = await _entityModified(latest);
+      final shouldUseLatest = originalModified == null ||
+          (latestModified != null && latestModified.isAfter(originalModified));
+      if (shouldUseLatest) {
+        path = latest;
+      }
     }
     String? bookmark;
     bool accessStarted = false;
@@ -559,6 +570,9 @@ class _HomeScreenState extends State<HomeScreen> {
     });
     try {
       if (Platform.isMacOS) {
+        if (path != rawPath) {
+          await _storeBookmark(path);
+        }
         bookmark = await LocalStore.loadBookmark(path);
         if (bookmark == null || bookmark.isEmpty) {
           throw Exception('未授权访问该路径，请重新选择文件/文件夹');
@@ -5089,6 +5103,54 @@ String _basename(String path) {
   final normalized = path.replaceAll('\\', '/');
   final parts = normalized.split('/');
   return parts.isNotEmpty ? parts.last : path;
+}
+
+Future<DateTime?> _entityModified(String path) async {
+  try {
+    final stat = await FileSystemEntity.stat(path);
+    return stat.modified;
+  } catch (_) {
+    return null;
+  }
+}
+
+Future<String?> _findLatestSiblingPath(String originalPath) async {
+  try {
+    final normalized = originalPath.replaceAll('\\', '/');
+    final dirPath = normalized.contains('/')
+        ? normalized.substring(0, normalized.lastIndexOf('/'))
+        : '.';
+    final dir = Directory(dirPath);
+    if (!await dir.exists()) return null;
+
+    final baseName = _basename(normalized);
+    final dotIndex = baseName.lastIndexOf('.');
+    final stem = dotIndex > 0 ? baseName.substring(0, dotIndex) : baseName;
+    final ext = dotIndex > 0 ? baseName.substring(dotIndex) : '';
+    final escapedStem = RegExp.escape(stem);
+    final escapedExt = RegExp.escape(ext);
+    final pattern = ext.isEmpty
+        ? RegExp('^$escapedStem([_-].+)?\$', caseSensitive: false)
+        : RegExp('^$escapedStem([_-].+)?$escapedExt\$', caseSensitive: false);
+
+    FileSystemEntity? latestEntity;
+    DateTime? latestModified;
+    await for (final entity in dir.list()) {
+      if (entity is! File && entity is! Directory) continue;
+      final name = _basename(entity.path);
+      if (!pattern.hasMatch(name)) continue;
+      final modified = await _entityModified(entity.path);
+      if (modified == null) continue;
+      if (latestModified == null || modified.isAfter(latestModified)) {
+        latestModified = modified;
+        latestEntity = entity;
+      }
+    }
+    if (latestEntity == null) return null;
+    return latestEntity.path;
+  } catch (_) {
+    return null;
+  }
 }
 
 String _truncate(String value, {int max = 200}) {
