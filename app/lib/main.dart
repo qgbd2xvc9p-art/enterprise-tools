@@ -571,7 +571,7 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       if (Platform.isMacOS) {
         if (path != rawPath) {
-          await _storeBookmark(path);
+          await _storeBookmarkForPath(path);
         }
         bookmark = await LocalStore.loadBookmark(path);
         if (bookmark == null || bookmark.isEmpty) {
@@ -698,6 +698,16 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
     _showSnack('打开失败：${lastError ?? '未知错误'}');
+  }
+
+  Future<void> _storeBookmarkForPath(String path) async {
+    if (!Platform.isMacOS) return;
+    try {
+      final bookmark = await BookmarkService.createBookmark(path);
+      if (bookmark != null && bookmark.isNotEmpty) {
+        await LocalStore.saveBookmark(path, bookmark);
+      }
+    } catch (_) {}
   }
 
   Future<void> _exportToolPackages(Tool tool) async {
