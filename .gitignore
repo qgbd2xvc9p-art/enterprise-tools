@@ -1,3 +1,5 @@
 .DS_Store
 dist-manual/
 dist-release/
+scripts/.cache/
+**/assets/fonts/harmonyos-sans/

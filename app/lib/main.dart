@@ -10,9 +10,16 @@ import 'package:http/http.dart' as http;
 
 const String registryUrl =
     'https://raw.githubusercontent.com/qgbd2xvc9p-art/enterprise-tools/main/registry.json';
+const String kHarmonyFontFamily = 'HarmonyOS Sans';
+const String kHarmonyFontZipUrl =
+    'https://developer.huawei.com/images/download/general/HarmonyOS-Sans.zip';
 const bool kLocalOnlyMode = true;
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  if (Platform.isWindows) {
+    await _ensureHarmonyFontLoaded();
+  }
   runApp(const EnterpriseToolsApp());
 }
 
@@ -54,21 +61,33 @@ class _EnterpriseToolsAppState extends State<EnterpriseToolsApp> {
 
   @override
   Widget build(BuildContext context) {
+    final baseFontFamily = Platform.isWindows ? kHarmonyFontFamily : 'Georgia';
     final theme = ThemeData(
       useMaterial3: true,
       colorScheme: const ColorScheme(
         brightness: Brightness.light,
-        primary: Color(0xFF0E3A53),
-        onPrimary: Color(0xFFF7F4EE),
-        secondary: Color(0xFFF4C07A),
-        onSecondary: Color(0xFF1B1A17),
+        primary: Color(0xFF12344D),
+        onPrimary: Color(0xFFFFFFFF),
+        secondary: Color(0xFF5C7A92),
+        onSecondary: Color(0xFFFFFFFF),
         error: Color(0xFFB94A48),
         onError: Color(0xFFFFFFFF),
-        surface: Color(0xFFF7F4EE),
+        surface: Color(0xFFF4F6F8),
         onSurface: Color(0xFF1B1A17),
       ),
-      scaffoldBackgroundColor: const Color(0xFFF7F4EE),
-      fontFamily: 'Georgia',
+      scaffoldBackgroundColor: const Color(0xFFF4F6F8),
+      fontFamily: baseFontFamily,
+      fontFamilyFallback: Platform.isWindows
+          ? const [
+              'Segoe UI',
+              'Microsoft YaHei',
+              'Noto Sans CJK SC',
+            ]
+          : const [
+              'PingFang SC',
+              'Microsoft YaHei',
+              'Noto Sans CJK SC',
+            ],
       textTheme: const TextTheme(
         headlineLarge: TextStyle(fontSize: 34, fontWeight: FontWeight.w700),
         headlineMedium: TextStyle(fontSize: 26, fontWeight: FontWeight.w600),
@@ -153,7 +172,7 @@ class _LoginScreenState extends State<LoginScreen> {
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
-            colors: [Color(0xFF0E3A53), Color(0xFF1D6B7F), Color(0xFFF4C07A)],
+            colors: [Color(0xFF12344D), Color(0xFF2A5C78), Color(0xFF5C7A92)],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
@@ -322,6 +341,8 @@ class _HomeScreenState extends State<HomeScreen> {
   Map<String, double> _downloadProgress = {};
   final Map<String, bool> _downloading = {};
   GitHubSettings? _settings;
+  bool _autoUpdating = false;
+  bool _bulkUpdating = false;
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
   bool _sidebarCollapsed = false;
@@ -347,8 +368,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (force) {
         RegistryService.clearCache();
       }
-      final settings =
-          widget.localOnlyMode ? null : await LocalStore.loadSettings();
+      final settings = await LocalStore.loadSettings();
       final registry = await RegistryService.loadRegistry(
         settings: settings,
         localOnlyMode: widget.localOnlyMode,
@@ -363,6 +383,7 @@ class _HomeScreenState extends State<HomeScreen> {
             visible.isNotEmpty ? visible.first.id : null;
         _loading = false;
       });
+      Future.microtask(() => _autoUpdateInstalled(registry, installed));
     } catch (err) {
       setState(() {
         _error = '加载工具清单失败：${err.toString()}';
@@ -378,6 +399,56 @@ class _HomeScreenState extends State<HomeScreen> {
     return enterprises
         .where((enterprise) => widget.user.enterprises.contains(enterprise.id))
         .toList();
+  }
+
+  Future<void> _autoUpdateInstalled(
+    Registry registry,
+    Map<String, InstalledEntry> installed,
+  ) async {
+    if (_autoUpdating) return;
+    final autoUpdate = _settings?.autoUpdate ?? true;
+    if (!autoUpdate) return;
+    final platformKey = Platform.isWindows
+        ? 'windows'
+        : Platform.isMacOS
+            ? 'macos'
+            : null;
+    if (platformKey == null) return;
+    final visible = _filterEnterprises(registry.enterprises);
+    final candidates = <Tool>[];
+    for (final enterprise in visible) {
+      for (final tool in enterprise.tools) {
+        final toolType = tool.type.toLowerCase();
+        final isDownloadTool = toolType == 'download';
+        final isLocalTool = toolType == 'local';
+        if (!isDownloadTool && !isLocalTool) continue;
+        if (isDownloadTool && !tool.platforms.containsKey(platformKey)) {
+          continue;
+        }
+        final key = '${tool.enterpriseId}/${tool.id}';
+        final entry = installed[key];
+        if (entry == null) continue;
+        if (compareVersions(entry.version, tool.version) < 0) {
+          candidates.add(tool);
+        }
+      }
+    }
+    if (candidates.isEmpty) return;
+    _autoUpdating = true;
+    if (mounted) {
+      _showSnack('发现 ${candidates.length} 个工具新版本，开始自动更新…');
+    }
+    for (final tool in candidates) {
+      if (!mounted) break;
+      final key = '${tool.enterpriseId}/${tool.id}';
+      if (_downloading[key] == true) continue;
+      if (tool.type.toLowerCase() == 'local') {
+        await _installLocalTool(tool);
+      } else {
+        await _downloadTool(tool);
+      }
+    }
+    _autoUpdating = false;
   }
 
   Future<void> _downloadTool(Tool tool) async {
@@ -424,6 +495,53 @@ class _HomeScreenState extends State<HomeScreen> {
       });
       _showSnack('下载失败：${err.toString()}');
     }
+  }
+
+  Future<void> _bulkDownloadOrUpdate(Enterprise enterprise) async {
+    if (_bulkUpdating) return;
+    if (enterprise.id.isEmpty) {
+      _showSnack('请选择企业。');
+      return;
+    }
+    final platformKey = Platform.isWindows
+        ? 'windows'
+        : Platform.isMacOS
+            ? 'macos'
+            : null;
+    if (platformKey == null) {
+      _showSnack('当前平台不支持批量下载。');
+      return;
+    }
+    final downloadTools = enterprise.tools
+        .where((tool) =>
+            tool.type.toLowerCase() == 'download' &&
+            tool.platforms.containsKey(platformKey))
+        .toList();
+    if (downloadTools.isEmpty) {
+      _showSnack('该企业暂无可下载工具。');
+      return;
+    }
+    final pending = downloadTools.where((tool) {
+      final key = '${tool.enterpriseId}/${tool.id}';
+      final installed = _installed[key];
+      if (installed == null) return true;
+      return compareVersions(installed.version, tool.version) < 0;
+    }).toList();
+    if (pending.isEmpty) {
+      _showSnack('已是最新，无需更新。');
+      return;
+    }
+    setState(() => _bulkUpdating = true);
+    _showSnack('开始批量下载/更新 ${pending.length} 个工具…');
+    for (final tool in pending) {
+      if (!mounted) break;
+      final key = '${tool.enterpriseId}/${tool.id}';
+      if (_downloading[key] == true) continue;
+      await _downloadTool(tool);
+    }
+    if (!mounted) return;
+    setState(() => _bulkUpdating = false);
+    _showSnack('批量下载/更新完成。');
   }
 
   Future<void> _installLocalTool(Tool tool) async {
@@ -668,12 +786,93 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Future<void> _openAppDescription() async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        final textTheme = Theme.of(context).textTheme;
+        final sectionTitle = textTheme.titleMedium?.copyWith(
+          fontWeight: FontWeight.w600,
+        );
+        return AlertDialog(
+          title: const Text('应用说明'),
+          content: SizedBox(
+            width: 520,
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '企业工具台是一款面向企业内部的桌面工具管理平台，用于集中管理、'
+                    '下载、更新与运行各类工具。它把分散的工具入口统一到一个界面里，'
+                    '提升部署效率与使用体验。',
+                    style: textTheme.bodyLarge,
+                  ),
+                  const SizedBox(height: 16),
+                  Text('主要功能', style: sectionTitle),
+                  const SizedBox(height: 6),
+                  const Text('• 企业工具集中管理与搜索'),
+                  const Text('• 支持下载工具 / 本地工具 / 命令行工具'),
+                  const Text('• 已安装工具可自动更新（可在设置中开关）'),
+                  const Text('• 支持本地模式与远程（GitHub）模式'),
+                  const SizedBox(height: 16),
+                  Text('使用步骤', style: sectionTitle),
+                  const SizedBox(height: 6),
+                  const Text('1. 在左侧企业列表选择企业。'),
+                  const Text('2. 右侧工具区可搜索名称/描述并查看工具详情。'),
+                  const Text('3. 下载工具点击“下载/更新”，本地工具点击“添加”。'),
+                  const Text('4. 下载完成后可点击“打开/运行”。'),
+                  const SizedBox(height: 16),
+                  Text('添加工具步骤', style: sectionTitle),
+                  const SizedBox(height: 6),
+                  const Text('1. 点击“新增工具”，选择所属企业。'),
+                  const Text('2. 填写工具名称、版本与描述。'),
+                  const Text('3. 选择工具类型并补充对应信息：'),
+                  const Text('   • 下载工具：填写下载地址或选择文件上传（需 GitHub 权限）。'),
+                  const Text('   • 本地工具：选择本机文件或文件夹路径。'),
+                  const Text('   • 命令行工具：填写命令、参数与工作目录。'),
+                  const Text('4. 点击“保存”，工具将出现在列表中。'),
+                  const SizedBox(height: 16),
+                  Text('提示', style: sectionTitle),
+                  const SizedBox(height: 6),
+                  const Text('• 本地工具仅对当前电脑有效，不会上传到远端。'),
+                  const Text('• 需要 GitHub 权限的功能请在“设置”中配置访问令牌。'),
+                  const Text('• 自动更新默认开启，可在“设置”中关闭。'),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('关闭'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   Future<void> _openSettings() async {
+    final current = _settings ?? GitHubSettings.defaultSettings();
     if (widget.localOnlyMode) {
-      _showSnack('本地模式无需设置 GitHub。');
+      final result = await showDialog<bool>(
+        context: context,
+        builder: (context) => LocalSettingsDialog(
+          autoUpdate: current.autoUpdate,
+        ),
+      );
+      if (result != null) {
+        final updated = current.copyWith(autoUpdate: result);
+        await LocalStore.saveSettings(updated);
+        setState(() {
+          _settings = updated;
+        });
+        _showSnack('设置已保存。');
+      }
       return;
     }
-    final current = _settings ?? GitHubSettings.defaultSettings();
     final result = await showDialog<GitHubSettings>(
       context: context,
       builder: (context) => GitHubSettingsDialog(settings: current),
@@ -995,7 +1194,7 @@ class _HomeScreenState extends State<HomeScreen> {
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
-            colors: [Color(0xFFF7F4EE), Color(0xFFE3EDF2)],
+            colors: [Color(0xFFF4F6F8), Color(0xFFE9EEF3)],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
@@ -1055,17 +1254,52 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  String _formatToolCount(int count) {
+    if (count > 99) return '99+';
+    return count.toString();
+  }
+
+  Widget _buildToolCountBadge(
+    ThemeData theme,
+    int count, {
+    required bool selected,
+    bool compact = false,
+  }) {
+    final background = selected
+        ? Colors.white.withOpacity(0.2)
+        : const Color(0xFFE9EEF3);
+    final foreground = selected ? Colors.white : Colors.black54;
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 6 : 8,
+        vertical: compact ? 2 : 4,
+      ),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        _formatToolCount(count),
+        style: theme.textTheme.bodySmall?.copyWith(
+          color: foreground,
+          fontSize: compact ? 10 : null,
+          height: 1.1,
+        ),
+      ),
+    );
+  }
+
   Widget _buildSidebar(ThemeData theme, List<Enterprise> enterprises) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(14),
         boxShadow: const [
           BoxShadow(
-            color: Color(0x14000000),
-            blurRadius: 20,
-            offset: Offset(0, 8),
+            color: Color(0x12000000),
+            blurRadius: 16,
+            offset: Offset(0, 6),
           ),
         ],
       ),
@@ -1076,7 +1310,32 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               if (!_sidebarCollapsed)
                 Expanded(
-                  child: Text('企业列表', style: theme.textTheme.titleLarge),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '企业列表',
+                          style: theme.textTheme.titleLarge,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      TextButton.icon(
+                        onPressed: _openAppDescription,
+                        icon: const Icon(Icons.info_outline, size: 16),
+                        label: const Text('说明'),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      ),
+                    ],
+                  ),
                 )
               else
                 const Expanded(child: SizedBox.shrink()),
@@ -1153,25 +1412,41 @@ class _HomeScreenState extends State<HomeScreen> {
                     itemBuilder: (context, index) {
                       final enterprise = enterprises[index];
                       final selected = enterprise.id == _selectedEnterpriseId;
+                      final toolCount = enterprise.tools.length;
                       final content = _sidebarCollapsed
                           ? Center(
                               child: Tooltip(
-                                message: enterprise.name,
-                                child: CircleAvatar(
-                                  radius: 18,
-                                  backgroundColor: selected
-                                      ? const Color(0xFF0E3A53)
-                                      : const Color(0xFFE3EDF2),
-                                  child: Text(
-                                    enterprise.name.isNotEmpty
-                                        ? enterprise.name.characters.first
-                                        : '?',
-                                    style: theme.textTheme.titleMedium
-                                        ?.copyWith(
-                                            color: selected
-                                                ? Colors.white
-                                                : Colors.black87),
-                                  ),
+                                message: '${enterprise.name}（$toolCount 个工具）',
+                                child: Stack(
+                                  clipBehavior: Clip.none,
+                                  children: [
+                                    CircleAvatar(
+                                      radius: 18,
+                                      backgroundColor: selected
+                                          ? theme.colorScheme.primary
+                                          : const Color(0xFFE9EEF3),
+                                      child: Text(
+                                        enterprise.name.isNotEmpty
+                                            ? enterprise.name.characters.first
+                                            : '?',
+                                        style: theme.textTheme.titleMedium
+                                            ?.copyWith(
+                                                color: selected
+                                                    ? Colors.white
+                                                    : Colors.black87),
+                                      ),
+                                    ),
+                                    Positioned(
+                                      right: -6,
+                                      bottom: -6,
+                                      child: _buildToolCountBadge(
+                                        theme,
+                                        toolCount,
+                                        selected: selected,
+                                        compact: true,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                             )
@@ -1188,6 +1463,12 @@ class _HomeScreenState extends State<HomeScreen> {
                                     ),
                                   ),
                                 ),
+                                _buildToolCountBadge(
+                                  theme,
+                                  toolCount,
+                                  selected: selected,
+                                ),
+                                const SizedBox(width: 8),
                                 if (enterprise.localOnly)
                                   Container(
                                     margin: const EdgeInsets.only(right: 8),
@@ -1195,10 +1476,10 @@ class _HomeScreenState extends State<HomeScreen> {
                                       horizontal: 8,
                                       vertical: 4,
                                     ),
-                                    decoration: BoxDecoration(
+                                      decoration: BoxDecoration(
                                       color: selected
                                           ? Colors.white.withOpacity(0.2)
-                                          : const Color(0xFFDCE6EC),
+                                          : const Color(0xFFE9EEF3),
                                       borderRadius: BorderRadius.circular(999),
                                     ),
                                     child: Text(
@@ -1247,8 +1528,8 @@ class _HomeScreenState extends State<HomeScreen> {
                           height: _sidebarCollapsed ? 48 : null,
                           decoration: BoxDecoration(
                             color: selected
-                                ? const Color(0xFF0E3A53)
-                                : const Color(0xFFF7F4EE),
+                                ? theme.colorScheme.primary
+                                : const Color(0xFFF4F6F8),
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: content,
@@ -1263,7 +1544,7 @@ class _HomeScreenState extends State<HomeScreen> {
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: const Color(0xFFE3EDF2),
+              color: const Color(0xFFE9EEF3),
               borderRadius: BorderRadius.circular(12),
             ),
             child: _sidebarCollapsed
@@ -1354,6 +1635,13 @@ class _HomeScreenState extends State<HomeScreen> {
                     label: const Text('刷新'),
                   ),
                   OutlinedButton.icon(
+                    onPressed: hasEnterprise && !_bulkUpdating
+                        ? () => _bulkDownloadOrUpdate(enterprise)
+                        : null,
+                    icon: const Icon(Icons.cloud_download_outlined),
+                    label: Text(_bulkUpdating ? '批量处理中' : '全部下载/更新'),
+                  ),
+                  OutlinedButton.icon(
                     onPressed: _openAddEnterprise,
                     icon: const Icon(Icons.domain_add),
                     label: const Text('新增企业'),
@@ -1363,12 +1651,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     icon: const Icon(Icons.add_box_outlined),
                     label: const Text('新增工具'),
                   ),
-                  if (!widget.localOnlyMode)
-                    IconButton(
-                      onPressed: _openSettings,
-                      tooltip: '设置',
-                      icon: const Icon(Icons.settings),
-                    ),
+                  IconButton(
+                    onPressed: _openSettings,
+                    tooltip: '设置',
+                    icon: const Icon(Icons.settings),
+                  ),
                 ],
               ),
             ),
@@ -1507,13 +1794,13 @@ class _HomeScreenState extends State<HomeScreen> {
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFE3EDF2)),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE4E8EE)),
         boxShadow: const [
           BoxShadow(
-            color: Color(0x14000000),
-            blurRadius: 18,
-            offset: Offset(0, 10),
+            color: Color(0x12000000),
+            blurRadius: 16,
+            offset: Offset(0, 8),
           ),
         ],
       ),
@@ -1590,7 +1877,10 @@ class _HomeScreenState extends State<HomeScreen> {
               minHeight: 6,
             ),
           if (isDownloadTool && isDownloading) const SizedBox(height: 12),
-          Row(
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               if (isDownloadTool)
                 FilledButton(
@@ -1616,21 +1906,18 @@ class _HomeScreenState extends State<HomeScreen> {
                   onPressed: () => _showSnack('此版本未启用网页工具。'),
                   child: const Text('不可用'),
                 ),
-              const SizedBox(width: 12),
               if ((isDownloadTool || isLocalTool) && installed != null)
                 OutlinedButton.icon(
                   onPressed: () => _openInstalledTool(installed, tool),
                   icon: const Icon(Icons.play_arrow),
                   label: const Text('打开/运行'),
                 ),
-              const SizedBox(width: 12),
               if (widget.localOnlyMode)
                 OutlinedButton.icon(
                   onPressed: () => _exportToolPackages(tool),
                   icon: const Icon(Icons.archive),
                   label: const Text('打包/导出'),
                 ),
-              if (widget.localOnlyMode) const SizedBox(width: 12),
               if ((isDownloadTool || isLocalTool) && installed != null)
                 Text(
                   installed.updatedAt,
@@ -1656,7 +1943,7 @@ class _InfoChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: accent ? const Color(0xFFF4C07A) : const Color(0xFFE3EDF2),
+        color: accent ? const Color(0xFFE7D3AE) : const Color(0xFFE9EEF3),
         borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
@@ -1688,6 +1975,57 @@ class _Tag extends StatelessWidget {
             .bodyMedium
             ?.copyWith(color: Colors.white),
       ),
+    );
+  }
+}
+
+class LocalSettingsDialog extends StatefulWidget {
+  const LocalSettingsDialog({super.key, required this.autoUpdate});
+
+  final bool autoUpdate;
+
+  @override
+  State<LocalSettingsDialog> createState() => _LocalSettingsDialogState();
+}
+
+class _LocalSettingsDialogState extends State<LocalSettingsDialog> {
+  late bool _autoUpdate;
+
+  @override
+  void initState() {
+    super.initState();
+    _autoUpdate = widget.autoUpdate;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('设置'),
+      content: SizedBox(
+        width: 360,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SwitchListTile(
+              value: _autoUpdate,
+              onChanged: (value) => setState(() => _autoUpdate = value),
+              contentPadding: EdgeInsets.zero,
+              title: const Text('自动更新已安装工具'),
+              subtitle: const Text('检测到新版本后自动更新'),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(_autoUpdate),
+          child: const Text('保存'),
+        ),
+      ],
     );
   }
 }
@@ -1735,6 +2073,7 @@ class _GitHubSettingsDialogState extends State<GitHubSettingsDialog> {
   late final TextEditingController _assetRegistryPathController;
   late final TextEditingController _uploadBasePathController;
   late final TextEditingController _expiryController;
+  bool _autoUpdate = true;
   String? _error;
   bool _saving = false;
   bool _testing = false;
@@ -1754,6 +2093,7 @@ class _GitHubSettingsDialogState extends State<GitHubSettingsDialog> {
         TextEditingController(text: widget.settings.uploadBasePath);
     _expiryController =
         TextEditingController(text: widget.settings.tokenExpiry);
+    _autoUpdate = widget.settings.autoUpdate;
   }
 
   @override
@@ -1799,6 +2139,7 @@ class _GitHubSettingsDialogState extends State<GitHubSettingsDialog> {
             ? 'tools'
             : _uploadBasePathController.text.trim(),
         tokenExpiry: expiry,
+        autoUpdate: _autoUpdate,
       ),
     );
   }
@@ -1917,6 +2258,14 @@ class _GitHubSettingsDialogState extends State<GitHubSettingsDialog> {
                   border: OutlineInputBorder(),
                 ),
               ),
+              const SizedBox(height: 12),
+              SwitchListTile(
+                value: _autoUpdate,
+                onChanged: (value) => setState(() => _autoUpdate = value),
+                contentPadding: EdgeInsets.zero,
+                title: const Text('自动更新已安装工具'),
+                subtitle: const Text('检测到新版本后自动下载'),
+              ),
               const SizedBox(height: 8),
               Text(
                 '注意：访问令牌会明文保存在本机设置文件中。',
@@ -2018,29 +2367,35 @@ class AddEnterpriseDialog extends StatefulWidget {
 }
 
 class _AddEnterpriseDialogState extends State<AddEnterpriseDialog> {
-  final _idController = TextEditingController();
   final _nameController = TextEditingController();
   bool _localOnly = false;
   String? _error;
 
   @override
   void dispose() {
-    _idController.dispose();
     _nameController.dispose();
     super.dispose();
   }
 
   void _save() {
-    final id = _idController.text.trim();
     final name = _nameController.text.trim();
-    if (id.isEmpty || name.isEmpty) {
-      setState(() => _error = '企业 ID 和名称不能为空。');
+    if (name.isEmpty) {
+      setState(() => _error = '企业名称不能为空。');
       return;
     }
-    if (widget.existing.any((e) => e.id == id)) {
-      setState(() => _error = '该企业 ID 已存在。');
+    final normalizedName = name.toLowerCase();
+    if (widget.existing
+        .any((e) => e.name.trim().toLowerCase() == normalizedName)) {
+      setState(() => _error = '该企业名称已存在。');
       return;
     }
+    final existingIds =
+        widget.existing.map((e) => e.id.toLowerCase()).toSet();
+    final id = _buildUniqueId(
+      name,
+      existingIds,
+      fallbackPrefix: 'enterprise',
+    );
     Navigator.of(context).pop(
       Enterprise(
         id: id,
@@ -2060,14 +2415,6 @@ class _AddEnterpriseDialogState extends State<AddEnterpriseDialog> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TextField(
-              controller: _idController,
-              decoration: const InputDecoration(
-                labelText: '企业 ID（小写、短横线）',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
             TextField(
               controller: _nameController,
               decoration: const InputDecoration(
@@ -2170,12 +2517,6 @@ class _ExportToolDialogState extends State<ExportToolDialog> {
     _setPath(platform, path);
   }
 
-  Future<void> _pickFolder(String platform) async {
-    final path = await FilePicker.platform.getDirectoryPath();
-    if (path == null) return;
-    _setPath(platform, path);
-  }
-
   void _setPath(String platform, String path) {
     setState(() {
       if (platform == 'macos') {
@@ -2200,11 +2541,11 @@ class _ExportToolDialogState extends State<ExportToolDialog> {
 
   void _submit() {
     if (_macPath == null || _macPath!.trim().isEmpty) {
-      setState(() => _error = '请选择 macOS 文件/文件夹。');
+      setState(() => _error = '请选择 macOS 文件。');
       return;
     }
     if (_winPath == null || _winPath!.trim().isEmpty) {
-      setState(() => _error = '请选择 Windows 文件/文件夹。');
+      setState(() => _error = '请选择 Windows 文件。');
       return;
     }
     Navigator.of(context).pop(
@@ -2240,12 +2581,6 @@ class _ExportToolDialogState extends State<ExportToolDialog> {
                     icon: const Icon(Icons.upload_file),
                     label: const Text('选择文件'),
                   ),
-                  const SizedBox(width: 8),
-                  OutlinedButton.icon(
-                    onPressed: () => _pickFolder('macos'),
-                    icon: const Icon(Icons.folder_open),
-                    label: const Text('选择文件夹'),
-                  ),
                   if (_macPath != null) ...[
                     const SizedBox(width: 6),
                     IconButton(
@@ -2274,12 +2609,6 @@ class _ExportToolDialogState extends State<ExportToolDialog> {
                     onPressed: () => _pickFile('windows'),
                     icon: const Icon(Icons.upload_file),
                     label: const Text('选择文件'),
-                  ),
-                  const SizedBox(width: 8),
-                  OutlinedButton.icon(
-                    onPressed: () => _pickFolder('windows'),
-                    icon: const Icon(Icons.folder_open),
-                    label: const Text('选择文件夹'),
                   ),
                   if (_winPath != null) ...[
                     const SizedBox(width: 6),
@@ -2319,7 +2648,6 @@ class _ExportToolDialogState extends State<ExportToolDialog> {
 }
 
 class _AddToolDialogState extends State<AddToolDialog> {
-  final _idController = TextEditingController();
   final _nameController = TextEditingController();
   final _versionController = TextEditingController(text: '0.1.0');
   final _descController = TextEditingController();
@@ -2351,7 +2679,6 @@ class _AddToolDialogState extends State<AddToolDialog> {
 
   @override
   void dispose() {
-    _idController.dispose();
     _nameController.dispose();
     _versionController.dispose();
     _descController.dispose();
@@ -2411,24 +2738,32 @@ class _AddToolDialogState extends State<AddToolDialog> {
       setState(() => _error = null);
     }
     final enterpriseId = _enterpriseId;
-    final id = _idController.text.trim();
     final name = _nameController.text.trim();
     final version = _versionController.text.trim();
     if (enterpriseId == null || enterpriseId.isEmpty) {
       setState(() => _error = '请选择企业。');
       return;
     }
-    if (id.isEmpty || name.isEmpty || version.isEmpty) {
-      setState(() => _error = '工具 ID、名称、版本不能为空。');
+    if (name.isEmpty || version.isEmpty) {
+      setState(() => _error = '工具名称和版本不能为空。');
       return;
     }
     final existingEnterprise =
         widget.enterprises.where((e) => e.id == enterpriseId).toList();
     if (existingEnterprise.isNotEmpty &&
-        existingEnterprise.first.tools.any((t) => t.id == id)) {
-      setState(() => _error = '该企业下已存在相同工具 ID。');
+        existingEnterprise.first.tools
+            .any((t) => t.name.trim().toLowerCase() == name.toLowerCase())) {
+      setState(() => _error = '该企业下已存在相同工具名称。');
       return;
     }
+    final existingIds = existingEnterprise.isNotEmpty
+        ? existingEnterprise.first.tools.map((t) => t.id.toLowerCase()).toSet()
+        : <String>{};
+    final id = _buildUniqueId(
+      name,
+      existingIds,
+      fallbackPrefix: 'tool',
+    );
     final desc = _descController.text.trim();
     final localOnly = widget.localOnlyMode ? true : _localOnly;
     if (_type == 'cli') {
@@ -2617,14 +2952,6 @@ class _AddToolDialogState extends State<AddToolDialog> {
               ),
               const SizedBox(height: 12),
               TextField(
-                controller: _idController,
-                decoration: const InputDecoration(
-                  labelText: '工具 ID',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
                 controller: _nameController,
                 decoration: const InputDecoration(
                   labelText: '工具名称',
@@ -2680,13 +3007,6 @@ class _AddToolDialogState extends State<AddToolDialog> {
                         icon: const Icon(Icons.upload_file),
                         label: const Text('选择 macOS 文件'),
                       ),
-                      const SizedBox(width: 8),
-                      OutlinedButton.icon(
-                        onPressed:
-                            _saving ? null : () => _pickLocalFolder('macos'),
-                        icon: const Icon(Icons.folder_open),
-                        label: const Text('选择 macOS 文件夹'),
-                      ),
                       if (_macLocalPath != null) ...[
                         const SizedBox(width: 4),
                         IconButton(
@@ -2729,13 +3049,6 @@ class _AddToolDialogState extends State<AddToolDialog> {
                             _saving ? null : () => _pickLocalFile('windows'),
                         icon: const Icon(Icons.upload_file),
                         label: const Text('选择 Windows 文件'),
-                      ),
-                      const SizedBox(width: 8),
-                      OutlinedButton.icon(
-                        onPressed:
-                            _saving ? null : () => _pickLocalFolder('windows'),
-                        icon: const Icon(Icons.folder_open),
-                        label: const Text('选择 Windows 文件夹'),
                       ),
                       if (_winLocalPath != null) ...[
                         const SizedBox(width: 4),
@@ -2828,7 +3141,8 @@ class _AddToolDialogState extends State<AddToolDialog> {
                     ),
                     const SizedBox(width: 8),
                     OutlinedButton.icon(
-                      onPressed: _saving ? null : () => _pickLocalFolder('local'),
+                      onPressed:
+                          _saving ? null : () => _pickLocalFolder('local'),
                       icon: const Icon(Icons.folder),
                       label: const Text('选择文件夹'),
                     ),
@@ -2896,20 +3210,17 @@ class EditEnterpriseDialog extends StatefulWidget {
 }
 
 class _EditEnterpriseDialogState extends State<EditEnterpriseDialog> {
-  late final TextEditingController _idController;
   late final TextEditingController _nameController;
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    _idController = TextEditingController(text: widget.enterprise.id);
     _nameController = TextEditingController(text: widget.enterprise.name);
   }
 
   @override
   void dispose() {
-    _idController.dispose();
     _nameController.dispose();
     super.dispose();
   }
@@ -2939,15 +3250,6 @@ class _EditEnterpriseDialogState extends State<EditEnterpriseDialog> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TextField(
-              controller: _idController,
-              readOnly: true,
-              decoration: const InputDecoration(
-                labelText: '企业 ID（不可修改）',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
             TextField(
               controller: _nameController,
               decoration: const InputDecoration(
@@ -2999,7 +3301,6 @@ class EditToolDialog extends StatefulWidget {
 }
 
 class _EditToolDialogState extends State<EditToolDialog> {
-  late final TextEditingController _idController;
   late final TextEditingController _nameController;
   late final TextEditingController _versionController;
   late final TextEditingController _descController;
@@ -3018,7 +3319,6 @@ class _EditToolDialogState extends State<EditToolDialog> {
   @override
   void initState() {
     super.initState();
-    _idController = TextEditingController(text: widget.tool.id);
     _nameController = TextEditingController(text: widget.tool.name);
     _versionController = TextEditingController(text: widget.tool.version);
     _descController = TextEditingController(text: widget.tool.description);
@@ -3039,7 +3339,6 @@ class _EditToolDialogState extends State<EditToolDialog> {
 
   @override
   void dispose() {
-    _idController.dispose();
     _nameController.dispose();
     _versionController.dispose();
     _descController.dispose();
@@ -3274,15 +3573,6 @@ class _EditToolDialogState extends State<EditToolDialog> {
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
-                controller: _idController,
-                readOnly: true,
-                decoration: const InputDecoration(
-                  labelText: '工具 ID（不可修改）',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
                 controller: _nameController,
                 decoration: const InputDecoration(
                   labelText: '工具名称',
@@ -3348,13 +3638,6 @@ class _EditToolDialogState extends State<EditToolDialog> {
                         icon: const Icon(Icons.upload_file),
                         label: const Text('选择 macOS 文件'),
                       ),
-                      const SizedBox(width: 8),
-                      OutlinedButton.icon(
-                        onPressed:
-                            _saving ? null : () => _pickLocalFolder('macos'),
-                        icon: const Icon(Icons.folder_open),
-                        label: const Text('选择 macOS 文件夹'),
-                      ),
                       if (_macLocalPath != null) ...[
                         const SizedBox(width: 4),
                         IconButton(
@@ -3397,13 +3680,6 @@ class _EditToolDialogState extends State<EditToolDialog> {
                             _saving ? null : () => _pickLocalFile('windows'),
                         icon: const Icon(Icons.upload_file),
                         label: const Text('选择 Windows 文件'),
-                      ),
-                      const SizedBox(width: 8),
-                      OutlinedButton.icon(
-                        onPressed:
-                            _saving ? null : () => _pickLocalFolder('windows'),
-                        icon: const Icon(Icons.folder_open),
-                        label: const Text('选择 Windows 文件夹'),
                       ),
                       if (_winLocalPath != null) ...[
                         const SizedBox(width: 4),
@@ -3496,7 +3772,8 @@ class _EditToolDialogState extends State<EditToolDialog> {
                     ),
                     const SizedBox(width: 8),
                     OutlinedButton.icon(
-                      onPressed: _saving ? null : () => _pickLocalFolder('local'),
+                      onPressed:
+                          _saving ? null : () => _pickLocalFolder('local'),
                       icon: const Icon(Icons.folder),
                       label: const Text('选择文件夹'),
                     ),
@@ -3795,6 +4072,7 @@ class GitHubSettings {
     required this.assetRegistryPath,
     required this.uploadBasePath,
     required this.tokenExpiry,
+    required this.autoUpdate,
   });
 
   final String token;
@@ -3804,8 +4082,31 @@ class GitHubSettings {
   final String assetRegistryPath;
   final String uploadBasePath;
   final String tokenExpiry;
+  final bool autoUpdate;
 
   bool get isValid => token.isNotEmpty && repo.contains('/');
+
+  GitHubSettings copyWith({
+    String? token,
+    String? repo,
+    String? branch,
+    String? registryPath,
+    String? assetRegistryPath,
+    String? uploadBasePath,
+    String? tokenExpiry,
+    bool? autoUpdate,
+  }) {
+    return GitHubSettings(
+      token: token ?? this.token,
+      repo: repo ?? this.repo,
+      branch: branch ?? this.branch,
+      registryPath: registryPath ?? this.registryPath,
+      assetRegistryPath: assetRegistryPath ?? this.assetRegistryPath,
+      uploadBasePath: uploadBasePath ?? this.uploadBasePath,
+      tokenExpiry: tokenExpiry ?? this.tokenExpiry,
+      autoUpdate: autoUpdate ?? this.autoUpdate,
+    );
+  }
 
   Map<String, dynamic> toJson() => {
         'token': token,
@@ -3815,6 +4116,7 @@ class GitHubSettings {
       'assetRegistryPath': assetRegistryPath,
       'uploadBasePath': uploadBasePath,
       'tokenExpiry': tokenExpiry,
+      'autoUpdate': autoUpdate,
     };
 
   factory GitHubSettings.fromJson(Map<String, dynamic> json) {
@@ -3826,6 +4128,7 @@ class GitHubSettings {
       assetRegistryPath: json['assetRegistryPath'] as String? ?? 'app/assets/registry.json',
       uploadBasePath: json['uploadBasePath'] as String? ?? 'tools',
       tokenExpiry: json['tokenExpiry'] as String? ?? '',
+      autoUpdate: json['autoUpdate'] as bool? ?? true,
     );
   }
 
@@ -3838,6 +4141,7 @@ class GitHubSettings {
       assetRegistryPath: 'app/assets/registry.json',
       uploadBasePath: 'tools',
       tokenExpiry: '',
+      autoUpdate: true,
     );
   }
 }
@@ -4721,6 +5025,45 @@ List<String> _parseArgs(String raw) {
   return args;
 }
 
+String _buildUniqueId(
+  String name,
+  Set<String> existingIds, {
+  required String fallbackPrefix,
+}) {
+  var base = _slugifyId(name);
+  if (base.isEmpty) {
+    base = _fallbackId(fallbackPrefix);
+  }
+  final normalizedExisting =
+      existingIds.map((id) => id.toLowerCase()).toSet();
+  var candidate = base;
+  var index = 2;
+  while (normalizedExisting.contains(candidate)) {
+    candidate = '$base-$index';
+    index++;
+  }
+  return candidate;
+}
+
+String _slugifyId(String input) {
+  final lower = input.trim().toLowerCase();
+  return lower
+      .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
+      .replaceAll(RegExp(r'-{2,}'), '-')
+      .replaceAll(RegExp(r'^-+|-+$'), '');
+}
+
+String _fallbackId(String prefix) {
+  final now = DateTime.now();
+  final stamp = '${now.year}'
+      '${now.month.toString().padLeft(2, '0')}'
+      '${now.day.toString().padLeft(2, '0')}'
+      '${now.hour.toString().padLeft(2, '0')}'
+      '${now.minute.toString().padLeft(2, '0')}'
+      '${now.second.toString().padLeft(2, '0')}';
+  return '$prefix-$stamp';
+}
+
 String _assetFromUrl(
   String url,
   String enterpriseId,
@@ -4773,6 +5116,48 @@ String _relativePath(String base, String path) {
     return pathNorm.substring(baseNorm.length);
   }
   return _basename(pathNorm);
+}
+
+Future<void> _ensureHarmonyFontLoaded() async {
+  try {
+    final base = await LocalStore._baseDir();
+    final fontDir = Directory('${base.path}/fonts/harmonyos-sans');
+    final marker = File('${fontDir.path}/.ready');
+    if (!await marker.exists()) {
+      await fontDir.create(recursive: true);
+      final uri = Uri.parse(kHarmonyFontZipUrl);
+      final response = await http.get(uri);
+      if (response.statusCode != 200) {
+        return;
+      }
+      final archive = ZipDecoder().decodeBytes(response.bodyBytes);
+      for (final file in archive) {
+        if (!file.isFile) continue;
+        final name = file.name;
+        final lower = name.toLowerCase();
+        if (!lower.endsWith('.ttf') && !lower.endsWith('.otf')) continue;
+        final output = File('${fontDir.path}/$_basename(name)');
+        await output.writeAsBytes(file.content as List<int>);
+      }
+      await marker.writeAsString('ok');
+    }
+
+    final fontFiles = await fontDir
+        .list()
+        .where((entity) =>
+            entity is File &&
+            (entity.path.toLowerCase().endsWith('.ttf') ||
+                entity.path.toLowerCase().endsWith('.otf')))
+        .toList();
+    if (fontFiles.isEmpty) return;
+    final loader = FontLoader(kHarmonyFontFamily);
+    for (final entity in fontFiles) {
+      final file = entity as File;
+      final bytes = await file.readAsBytes();
+      loader.addFont(Future.value(ByteData.view(bytes.buffer)));
+    }
+    await loader.load();
+  } catch (_) {}
 }
 
 Future<File> _zipSourceTo(String sourcePath, String targetPath) async {

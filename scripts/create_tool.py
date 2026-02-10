@@ -162,6 +162,7 @@ def main() -> None:
     parser.add_argument("--description", default="")
     parser.add_argument("--update", action="store_true")
     parser.add_argument("--init-flutter", action="store_true")
+    parser.add_argument("--no-harmony-font", action="store_true")
     parser.add_argument("--repo", help="GitHub repo in owner/name form")
 
     args = parser.parse_args()
@@ -188,6 +189,15 @@ def main() -> None:
 
     if args.init_flutter:
         _run_flutter_create(tool_dir, tool_id)
+        if not args.no_harmony_font:
+            subprocess.check_call(
+                [
+                    sys.executable,
+                    os.path.join("scripts", "apply_harmony_font.py"),
+                    "--tool",
+                    tool_dir,
+                ]
+            )
 
     repo_slug = args.repo or _infer_repo_slug()
 

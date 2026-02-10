@@ -78,6 +78,11 @@ def build_entry(tool_yaml: str):
             "macos", "build/macos/Build/Products/Release"
         ),
     }
+    apply_cmd = "python ../../../../scripts/apply_harmony_font.py --tool ."
+    if "apply_harmony_font.py" not in entry["build_windows"]:
+        entry["build_windows"] = f"{apply_cmd} && {entry['build_windows']}"
+    if "apply_harmony_font.py" not in entry["build_macos"]:
+        entry["build_macos"] = f"{apply_cmd} && {entry['build_macos']}"
     return entry
 
 
