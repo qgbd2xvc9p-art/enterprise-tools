@@ -5107,7 +5107,8 @@ String _basename(String path) {
 
 Future<DateTime?> _entityModified(String path) async {
   try {
-    final stat = await FileSystemEntity.stat(path);
+    final stat = await FileStat.stat(path);
+    if (stat.type == FileSystemEntityType.notFound) return null;
     return stat.modified;
   } catch (_) {
     return null;
